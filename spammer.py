@@ -237,148 +237,127 @@ class TelegramSpammer:
         except Exception as e:
             raise Exception(f"Группа не найдена: {str(e)}")
                 
-async def send_to_group(self, group: str, message: str) -> Tuple[bool, str]:
-    logger.info(f"🔍 ВХОД В send_to_group для {group}")
-    
-    try:
-        client = await self._get_client()
-        logger.info(f"✅ Клиент получен для {group}")
-        
-        max_msgs = self.config.get('max_messages_per_hour', 30)
-        if self.sent_count >= max_msgs:
-            return False, f"Лимит {max_msgs}"
-            
-        current_time = time.time()
-        delay = self.config.get('delay_between_groups', 3)
-        if current_time - self.last_sent_time < delay:
-            await asyncio.sleep(delay - (current_time - self.last_sent_time))
-        
-        logger.info(f"🔍 Получаю сущность для {group}")
-        entity = await asyncio.wait_for(
-            self.get_entity_by_id(group),
-            timeout=5
-        )
-        logger.info(f"✅ Сущность получена для {group}")
-        
-        logger.info(f"📤 Отправляю сообщение в {group}")
-        await asyncio.wait_for(
-            client.send_message(entity, message),
-            timeout=10
-        )
-        logger.info(f"✅ Сообщение отправлено в {group}")
-        
-        self.sent_count += 1
-        self.last_sent_time = time.time()
-        
-        return True, "OK"
-        
-    except asyncio.TimeoutError as e:
-        logger.error(f"❌ ТАЙМАУТ в send_to_group для {group}: {e}")
-        return False, f"Таймаут"
-    except Exception as e:
-        logger.error(f"❌ ОШИБКА в send_to_group для {group}: {e}")
-        return False, str(e)
-            
-async def spam_loop(self):
-    logger.info("🔄 Запуск цикла рассылки")
-    
-    while self.is_running:
+    async def send_to_group(self, group: str, message: str) -> Tuple[bool, str]:
         try:
-            logger.info("🔍 НАЧАЛО ЦИКЛА")
+            client = await self._get_client()
             
-            if self.is_paused:
-                logger.info("⏸️ На паузе")
-                await asyncio.sleep(5)
-                continue
+            max_msgs = self.config.get('max_messages_per_hour', 30)
+            if self.sent_count >= max_msgs:
+                return False, f"Лимит {max_msgs} сообщений в час"
                 
-            if not self.config.get('enabled', False):
-                logger.info("⏸️ Отключено в настройках")
-                await asyncio.sleep(self.config.get('interval', 10))
-                continue
-                
-            if not self.groups:
-                logger.warning("⚠️ Нет групп")
-                await asyncio.sleep(self.config.get('interval', 10))
-                continue
-                
-            message = self.config.get('message_text', '')
-            if not message:
-                logger.warning("⚠️ Нет текста")
-                await asyncio.sleep(self.config.get('interval', 10))
-                continue
+            current_time = time.time()
+            delay = self.config.get('delay_between_groups', 3)
+            if current_time - self.last_sent_time < delay:
+                await asyncio.sleep(delay - (current_time - self.last_sent_time))
             
-            logger.info(f"📤 Отправка в {len(self.groups)} групп")
-            logger.info(f"📝 Текст: {message[:50]}...")
+            try:
+                entity = await asyncio.wait_for(
+                    self.get_entity_by_id(group),
+                    timeout=10
+                )
+            except asyncio.TimeoutError:
+                return False, "Таймаут получения группы"
+            except Exception as e:
+                return False, str(e)
             
-            for i, group in enumerate(self.groups):
-                logger.info(f"🔍 ГРУППА #{i+1}: {group}")
-                
-                if not self.is_running:
-                    break
-                
-                logger.info(f"📤 Отправка в {group}...")
-                
-                try:
-                    logger.info(f"⏳ Вызов send_to_group для {group}")
-                    success, error = await asyncio.wait_for(
-                        self.send_to_group(group, message),
-                        timeout=15
-                    )
-                    logger.info(f"✅ Результат для {group}: success={success}, error={error}")
-                    
-                    if success:
-                        logger.info(f"✅ Успешно в {group}")
-                    else:
-                        logger.error(f"❌ Ошибка в {group}: {error}")
-                        
-                except asyncio.TimeoutError:
-                    logger.error(f"❌ ТАЙМАУТ 15 сек для {group}")
-                except Exception as e:
-                    logger.error(f"❌ ИСКЛЮЧЕНИЕ для {group}: {e}")
-                    
-                logger.info(f"⏳ Пауза {self.config.get('delay_between_groups', 3)} сек")
-                await asyncio.sleep(self.config.get('delay_between_groups', 3))
-                
-            logger.info(f"✅ ЦИКЛ ЗАВЕРШЕН: {success_count}/{len(self.groups)}")
-            self.sent_count = 0
+            try:
+                await asyncio.wait_for(
+                    client.send_message(entity, message),
+                    timeout=30
+                )
+            except asyncio.TimeoutError:
+                return False, "Таймаут отправки"
+            except errors.ChatWriteForbiddenError:
+                return False, "Нет прав на отправку"
+            except errors.RPCError as e:
+                return False, f"Ошибка Telegram: {str(e)}"
+            
+            self.sent_count += 1
+            self.last_sent_time = time.time()
+            
+            logger.info(f"✅ Отправлено в {group}")
+            return True, "OK"
             
         except Exception as e:
-            logger.error(f"❌ Ошибка цикла: {e}")
-            import traceback
-            traceback.print_exc()
-            await asyncio.sleep(5)
+            logger.error(f"❌ Ошибка: {e}")
+            return False, str(e)
             
-        if self.is_running:
-            interval = self.config.get('interval', 10)
-            logger.info(f"⏱ Ожидание {interval} сек")
-            await asyncio.sleep(interval)
+    async def spam_loop(self):
+        logger.info("🔄 Запуск цикла рассылки")
+        
+        while self.is_running:
+            try:
+                if self.is_paused:
+                    await asyncio.sleep(5)
+                    continue
+                    
+                if not self.config.get('enabled', False):
+                    logger.info("⏸️ Рассылка отключена")
+                    await asyncio.sleep(self.config.get('interval', 10))
+                    continue
+                    
+                if not self.groups:
+                    logger.warning("⚠️ Нет групп")
+                    await asyncio.sleep(self.config.get('interval', 10))
+                    continue
+                    
+                message = self.config.get('message_text', '')
+                if not message:
+                    logger.warning("⚠️ Нет текста")
+                    await asyncio.sleep(self.config.get('interval', 10))
+                    continue
+                
+                logger.info(f"📤 Отправка в {len(self.groups)} групп")
+                success_count = 0
+                
+                for group in self.groups:
+                    if not self.is_running:
+                        break
+                    
+                    logger.info(f"📤 Отправка в {group}...")
+                    
+                    try:
+                        success, error = await asyncio.wait_for(
+                            self.send_to_group(group, message),
+                            timeout=20
+                        )
+                        if success:
+                            success_count += 1
+                            logger.info(f"✅ Успешно в {group}")
+                        else:
+                            logger.error(f"❌ Ошибка в {group}: {error}")
+                    except asyncio.TimeoutError:
+                        logger.error(f"❌ Таймаут в {group}")
+                        
+                    await asyncio.sleep(self.config.get('delay_between_groups', 3))
+                    
+                logger.info(f"✅ Успешно: {success_count}/{len(self.groups)}")
+                self.sent_count = 0
+                
+            except Exception as e:
+                logger.error(f"❌ Ошибка цикла: {e}")
+                await asyncio.sleep(5)
+                
+            if self.is_running:
+                interval = self.config.get('interval', 10)
+                logger.info(f"⏱ Ожидание {interval} сек")
+                await asyncio.sleep(interval)
                 
     async def start(self):
-        """Запуск рассылки"""
         if self.is_running:
-            logger.warning("⚠️ Рассылка уже запущена")
             return
             
-        try:
-            success, error = await self._ensure_client()
-            if not success:
-                logger.error(f"❌ {error}")
-                return
-                
-            if not self.config.get('message_text'):
-                logger.error("❌ Текст сообщения не указан!")
-                return
-                
-            self.is_running = True
-            self.sent_count = 0
-            self.last_sent_time = 0
+        success, error = await self._ensure_client()
+        if not success:
+            logger.error(f"❌ {error}")
+            return
             
-            self.task = asyncio.create_task(self.spam_loop())
-            logger.info("🚀 Рассылка запущена")
-            
-        except Exception as e:
-            logger.error(f"❌ Ошибка запуска: {e}")
-            self.is_running = False
+        self.is_running = True
+        self.sent_count = 0
+        self.last_sent_time = 0
+        
+        self.task = asyncio.create_task(self.spam_loop())
+        logger.info("🚀 Рассылка запущена")
             
     async def stop(self):
         self.is_running = False
@@ -405,7 +384,7 @@ async def spam_loop(self):
         self.is_paused = False
         logger.info("▶️ Продолжено")
         
-    def get_status(self) -> Dict:
+    def get_status(self):
         return {
             'running': self.is_running,
             'paused': self.is_paused,
