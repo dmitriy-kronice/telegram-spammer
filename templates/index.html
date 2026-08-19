@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Telegram Spammer</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .card { background: white; border-radius: 15px; padding: 25px; margin-bottom: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); }
+        .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 2px solid #f0f0f0; padding-bottom: 15px; }
+        .card-title { font-size: 24px; font-weight: 700; color: #333; }
+        .status-badge { padding: 8px 16px; border-radius: 20px; font-weight: 600; font-size: 14px; }
+        .status-running { background: #10b981; color: white; }
+        .status-stopped { background: #ef4444; color: white; }
+        .status-paused { background: #f59e0b; color: white; }
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; font-weight: 600; margin-bottom: 5px; color: #555; }
+        .form-group input, .form-group textarea { width: 100%; padding: 10px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: 14px; }
+        .form-group textarea { min-height: 120px; resize: vertical; font-family: inherit; }
+        .btn { padding: 10px 20px; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; transition: all 0.3s; font-size: 14px; }
+        .btn-primary { background: #667eea; color: white; }
+        .btn-primary:hover { background: #5a67d8; transform: translateY(-2px); }
+        .btn-success { background: #10b981; color: white; }
+        .btn-success:hover { background: #059669; }
+        .btn-danger { background: #ef4444; color: white; }
+        .btn-danger:hover { background: #dc2626; }
+        .btn-warning { background: #f59e0b; color: white; }
+        .btn-warning:hover { background: #d97706; }
+        .btn-sm { padding: 5px 12px; font-size: 12px; }
+        .btn-group { display: flex; gap: 10px; flex-wrap: wrap; }
+        .group-item { display: flex; justify-content: space-between; align-items: center; padding: 10px 15px; background: #f9fafb; border-radius: 8px; margin-bottom: 8px; border-left: 4px solid #667eea; }
+        .group-item .group-name { font-weight: 500; color: #333; }
+        .group-item .btn { margin-left: 10px; }
+        .logs-container { max-height: 200px; overflow-y: auto; background: #1f2937; color: #e5e7eb; padding: 15px; border-radius: 8px; font-family: 'Courier New', monospace; font-size: 12px; line-height: 1.6; }
+        .logs-container .log-entry { padding: 2px 0; }
+        .logs-container .log-error { color: #ef4444; }
+        .logs-container .log-success { color: #10b981; }
+        .logs-container .log-warning { color: #f59e0b; }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-top: 15px; }
+        .stat-item { text-align: center; padding: 15px; background: #f9fafb; border-radius: 10px; }
+        .stat-item .stat-value { font-size: 28px; font-weight: 700; color: #667eea; }
+        .stat-item .stat-label { font-size: 12px; color: #6b7280; margin-top: 5px; }
+        .auth-section { background: #f0f4ff; border-radius: 10px; padding: 20px; margin-bottom: 20px; border: 2px solid #667eea; }
+        .auth-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+        .auth-row input { flex: 1; min-width: 150px; padding: 10px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: 14px; }
+        .auth-status { font-weight: 600; margin-bottom: 10px; }
+        @media (max-width: 768px) { .grid-2 { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Шапка -->
+        <div class="card">
+            <div class="card-header">
+                <h1 class="card-title">📢 Telegram Spammer</h1>
+                <span id="statusBadge" class="status-badge status-stopped">⏹️ Остановлен</span>
+            </div>
+            <div class="btn-group">
+                <button class="btn btn-success" onclick="startSpam()">▶️ Запустить</button>
+                <button class="btn btn-warning" onclick="pauseSpam()">⏸️ Пауза</button>
+                <button class="btn btn-success" onclick="resumeSpam()">▶️ Продолжить</button>
+                <button class="btn btn-danger" onclick="stopSpam()">⏹️ Остановить</button>
+                <button class="btn btn-primary" onclick="refreshStatus()">🔄 Обновить</button>
+            </div>
+        </div>
+
+        <!-- Авторизация -->
+        <div class="card">
+            <div class="auth-section">
+                <div class="auth-status">
+                    🔐 Статус: <span id="authStatus" style="font-weight: 700; color: #ef4444;">Не авторизован</span>
+                    <span id="authPhone" style="margin-left: 10px; color: #6b7280;"></span>
+                </div>
+                <div class="auth-row">
+                    <input type="text" id="phoneInput" placeholder="+79001234567">
+                    <button class="btn btn-primary" onclick="sendCode()">📱 Отправить код</button>
+                    <input type="text" id="codeInput" placeholder="Код из Telegram" style="max-width: 150px;">
+                    <button class="btn btn-success" onclick="verifyCode()">✅ Подтвердить</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Настройки и Группы -->
+        <div class="grid-2">
+            <!-- Настройки -->
+            <div class="card">
+                <h2 class="card-title" style="font-size: 20px; margin-bottom: 15px;">⚙️ Настройки</h2>
+                <div class="form-group">
+                    <label>API ID</label>
+                    <input type="number" id="apiId" placeholder="API ID">
+                </div>
+                <div class="form-group">
+                    <label>API Hash</label>
+                    <input type="text" id="apiHash" placeholder="API Hash">
+                </div>
+                <div class="form-group">
+                    <label>Текст сообщения</label>
+                    <textarea id="messageText" placeholder="Текст для рассылки"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Интервал (сек)</label>
+                    <input type="number" id="interval" value="3600">
+                </div>
+                <div class="form-group">
+                    <label>Задержка между группами (сек)</label>
+                    <input type="number" id="delayBetween" value="3">
+                </div>
+                <div class="form-group">
+                    <label>Максимум сообщений в час</label>
+                    <input type="number" id="maxPerHour" value="30">
+                </div>
+                <div class="form-group">
+                    <label><input type="checkbox" id="enabled"> Включить рассылку</label>
+                </div>
+                <button class="btn btn-primary" onclick="saveConfig()">💾 Сохранить</button>
+            </div>
+
+            <!-- Группы -->
+            <div class="card">
+                <h2 class="card-title" style="font-size: 20px; margin-bottom: 15px;">👥 Группы</h2>
+                <div class="form-group">
+                    <div style="display: flex; gap: 10px;">
+                        <input type="text" id="groupInput" placeholder="@group или ID" style="flex: 1;">
+                        <button class="btn btn-success" onclick="addGroup()">➕ Добавить</button>
+                    </div>
+                    <small style="color: #6b7280;">Пример: @my_group или -1001234567890</small>
+                </div>
+                <div id="groupsList"></div>
+                <div style="margin-top: 15px; display: flex; gap: 10px; flex-wrap: wrap;">
+                    <button class="btn btn-primary" onclick="loadGroups()">🔄 Обновить</button>
+                    <button class="btn btn-danger" onclick="clearGroups()">🗑️ Очистить все</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Статистика -->
+        <div class="card">
+            <h2 class="card-title" style="font-size: 20px; margin-bottom: 15px;">📊 Статистика</h2>
+            <div class="stats-grid">
+                <div class="stat-item"><div class="stat-value" id="statGroups">0</div><div class="stat-label">Групп</div></div>
+                <div class="stat-item"><div class="stat-value" id="statStatus">—</div><div class="stat-label">Статус</div></div>
+                <div class="stat-item"><div class="stat-value" id="statInterval">0</div><div class="stat-label">Интервал</div></div>
+                <div class="stat-item"><div class="stat-value" id="statConnected">❌</div><div class="stat-label">Подключение</div></div>
+            </div>
+        </div>
+
+        <!-- Логи -->
+        <div class="card">
+            <h2 class="card-title" style="font-size: 20px; margin-bottom: 15px;">📋 Логи</h2>
+            <div class="logs-container" id="logs"><div class="log-entry">📱 Запуск приложения...</div></div>
+        </div>
+    </div>
+
+    <script>
+        // Автообновление
+        setInterval(refreshStatus, 5000);
+        setInterval(loadGroups, 10000);
+        setInterval(checkAuthStatus, 5000);
+
+        // Загрузка при старте
+        window.onload = function() {
+            refreshStatus();
+            loadGroups();
+            loadConfig();
+            checkAuthStatus();
+        };
+
+        // Логи
+        function addLog(message, type = 'info') {
+            const logs = document.getElementById('logs');
+            const entry = document.createElement('div');
+            entry.className = `log-entry log-${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logs.appendChild(entry);
+            logs.scrollTop = logs.scrollHeight;
+        }
+
+        // Авторизация
+        async function checkAuthStatus() {
+            try {
+                const r = await fetch('/api/auth/status');
+                const d = await r.json();
+                if (d.success) {
+                    const el = document.getElementById('authStatus');
+                    if (d.is_authorized) {
+                        el.textContent = '✅ Авторизован';
+                        el.style.color = '#10b981';
+                    } else {
+                        el.textContent = '❌ Не авторизован';
+                        el.style.color = '#ef4444';
+                    }
+                    document.getElementById('authPhone').textContent = d.phone ? `(${d.phone})` : '';
+                }
+            } catch(e) { console.error(e); }
+        }
+
+        async function sendCode() {
+            const phone = document.getElementById('phoneInput').value.trim();
+            if (!phone) return addLog('❌ Введите номер телефона', 'error');
+            try {
+                const r = await fetch('/api/auth/send', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phone })
+                });
+                const d = await r.json();
+                addLog(d.success ? '✅ ' + d.message : '❌ ' + d.error, d.success ? 'success' : 'error');
+            } catch(e) { addLog('❌ ' + e, 'error'); }
+        }
+
+        async function verifyCode() {
+            const code = document.getElementById('codeInput').value.trim();
+            if (!code) return addLog('❌ Введите код', 'error');
+            try {
+                const r = await fetch('/api/auth/verify', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ code })
+                });
+                const d = await r.json();
+                addLog(d.success ? '✅ ' + d.message : '❌ ' + d.error, d.success ? 'success' : 'error');
+                if (d.success) checkAuthStatus();
+            } catch(e) { addLog('❌ ' + e, 'error'); }
+        }
+
+        // Статус
+        async function refreshStatus() {
+            try {
+                const r = await fetch('/api/status');
+                const d = await r.json();
+                if (d.success) {
+                    const s = d.status;
+                    const badge = document.getElementById('statusBadge');
+                    if (s.running) {
+                        if (s.paused) {
+                            badge.className = 'status-badge status-paused';
+                            badge.textContent = '⏸️ На паузе';
+                        } else {
+                            badge.className = 'status-badge status-running';
+                            badge.textContent = '▶️ Запущен';
+                        }
+                    } else {
+                        badge.className = 'status-badge status-stopped';
+                        badge.textContent = '⏹️ Остановлен';
+                    }
+                    document.getElementById('statGroups').textContent = s.groups_count;
+                    document.getElementById('statStatus').textContent = s.enabled ? 'Активен' : 'Отключен';
+                    document.getElementById('statInterval').textContent = s.interval;
+                    document.getElementById('statConnected').textContent = s.is_connected ? '✅' : '❌';
+                }
+            } catch(e) { console.error(e); }
+        }
+
+        // Конфиг
+        async function loadConfig() {
+            try {
+                const r = await fetch('/api/config');
+                const d = await r.json();
+                if (d.success) {
+                    const c = d.config;
+                    document.getElementById('apiId').value = c.api_id || '';
+                    document.getElementById('apiHash').value = c.api_hash || '';
+                    document.getElementById('messageText').value = c.message_text || '';
+                    document.getElementById('interval').value = c.interval || 3600;
+                    document.getElementById('delayBetween').value = c.delay_between_groups || 3;
+                    document.getElementById('maxPerHour').value = c.max_messages_per_hour || 30;
+                    document.getElementById('enabled').checked = c.enabled || false;
+                    if (c.phone) document.getElementById('phoneInput').value = c.phone;
+                }
+            } catch(e) { console.error(e); }
+        }
+
+        async function saveConfig() {
+            const config = {
+                api_id: parseInt(document.getElementById('apiId').value) || 0,
+                api_hash: document.getElementById('apiHash').value,
+                message_text: document.getElementById('messageText').value,
+                interval: parseInt(document.getElementById('interval').value) || 3600,
+                delay_between_groups: parseInt(document.getElementById('delayBetween').value) || 3,
+                max_messages_per_hour: parseInt(document.getElementById('maxPerHour').value) || 30,
+                enabled: document.getElementById('enabled').checked
+            };
+            try {
+                const r = await fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(config)
+                });
+                const d = await r.json();
+                addLog(d.success ? '✅ Настройки сохранены' : '❌ ' + d.error, d.success ? 'success' : 'error');
+            } catch(e) { addLog('❌ ' + e, 'error'); }
+        }
+
+        // Группы
+        async function loadGroups() {
+            try {
+                const r = await fetch('/api/groups');
+                const d = await r.json();
+                if (d.success) {
+                    const container = document.getElementById('groupsList');
+                    container.innerHTML = '';
+                    if (d.groups.length === 0) {
+                        container.innerHTML = '<div style="text-align:center;color:#6b7280;padding:20px;">Нет добавленных групп</div>';
+                        return;
+                    }
+                    d.groups.forEach(g => {
+                        const item = document.createElement('div');
+                        item.className = 'group-item';
+                        item.innerHTML = `
+                            <span class="group-name">${g}</span>
+                            <div>
+                                <button class="btn btn-primary btn-sm" onclick="testGroup('${g}')">Тест</button>
+                                <button class="btn btn-danger btn-sm" onclick="removeGroup('${g}')">Удалить</button>
+                            </div>
+                        `;
+                        container.appendChild(item);
+                    });
+                    document.getElementById('statGroups').textContent = d.groups.length;
+                }
+            } catch(e) { console.error(e); }
+        }
+
+        async function addGroup() {
+            const input = document.getElementById('groupInput');
+            const group = input.value.trim();
+            if (!group) return addLog('❌ Введите группу', 'error');
+            try {
+                const r = await fetch('/api/groups', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ group })
+                });
+                const d = await r.json();
+                addLog(d.success ? '✅ ' + d.message : '❌ ' + d.error, d.success ? 'success' : 'error');
+                if (d.success) { input.value = ''; loadGroups(); refreshStatus(); }
+            } catch(e) { addLog('❌ ' + e, 'error'); }
+        }
+
+        async function removeGroup(group) {
+            if (!confirm(`Удалить группу ${group}?`)) return;
+            try {
+                const r = await fetch('/api/groups', {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ group })
+                });
+                const d = await r.json();
+                addLog(d.success ? '✅ ' + d.message : '❌ ' + d.error, d.success ? 'success' : 'error');
+                if (d.success) { loadGroups(); refreshStatus(); }
+            } catch(e) { addLog('❌ ' + e, 'error'); }
+        }
+
+        async function clearGroups() {
+            if (!confirm('Удалить все группы?')) return;
+            try {
+                const r = await fetch('/api/clear_groups', { method: 'POST' });
+                const d = await r.json();
+                addLog(d.success ? '✅ ' + d.message : '❌ ' + d.error, d.success ? 'success' : 'error');
+                if (d.success) loadGroups();
+            } catch(e) { addLog('❌ ' + e, 'error'); }
+        }
+
+        // Тест
+        async function testGroup(group) {
+            const message = prompt('Введите тестовое сообщение:');
+            if (!message) return;
+            try {
+                const r = await fetch('/api/test', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ group, message })
+                });
+                const d = await r.json();
+                addLog(d.success ? '✅ Отправлено в ' + group : '❌ ' + d.error, d.success ? 'success' : 'error');
+            } catch(e) { addLog('❌ ' + e, 'error'); }
+        }
+
+        // Управление рассылкой
+        async function startSpam() {
+            try {
+                const r = await fetch('/api/start', { method: 'POST' });
+                const d = await r.json();
+                addLog(d.success ? '✅ ' + d.message : '❌ ' + d.error, d.success ? 'success' : 'error');
+                if (d.success) refreshStatus();
+            } catch(e) { addLog('❌ ' + e, 'error'); }
+        }
+
+        async function stopSpam() {
+            try {
+                const r = await fetch('/api/stop', { method: 'POST' });
+                const d = await r.json();
+                addLog(d.success ? '✅ ' + d.message : '❌ ' + d.error, d.success ? 'success' : 'error');
+                if (d.success) refreshStatus();
+            } catch(e) { addLog('❌ ' + e, 'error'); }
+        }
+
+        async function pauseSpam() {
+            try {
+                const r = await fetch('/api/pause', { method: 'POST' });
+                const d = await r.json();
+                addLog(d.success ? '✅ ' + d.message : '❌ ' + d.error, d.success ? 'success' : 'error');
+                if (d.success) refreshStatus();
+            } catch(e) { addLog('❌ ' + e, 'error'); }
+        }
+
+        async function resumeSpam() {
+            try {
+                const r = await fetch('/api/resume', { method: 'POST' });
+                const d = await r.json();
+                addLog(d.success ? '✅ ' + d.message : '❌ ' + d.error, d.success ? 'success' : 'error');
+                if (d.success) refreshStatus();
+            } catch(e) { addLog('❌ ' + e, 'error'); }
+        }
+
+        // Enter
+        document.getElementById('phoneInput').addEventListener('keypress', e => { if (e.key === 'Enter') sendCode(); });
+        document.getElementById('codeInput').addEventListener('keypress', e => { if (e.key === 'Enter') verifyCode(); });
+        document.getElementById('groupInput').addEventListener('keypress', e => { if (e.key === 'Enter') addGroup(); });
+    </script>
+</body>
+</html>
