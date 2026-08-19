@@ -8,6 +8,9 @@ from typing import List, Dict, Optional, Tuple
 from telethon import TelegramClient, errors
 from telethon.tl.types import Message
 
+# СОЗДАЕМ ПАПКУ ДЛЯ ЛОГОВ ДО НАСТРОЙКИ
+os.makedirs('logs', exist_ok=True)
+
 # Настройка логов
 logging.basicConfig(
     level=logging.INFO,
