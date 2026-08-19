@@ -260,88 +260,96 @@ class TelegramSpammer:
         except Exception as e:
             raise Exception(f"Ошибка получения сущности: {str(e)}")
                 
-    async def send_to_group(self, group: str, message: str) -> Tuple[bool, str]:
+async def send_to_group(self, group: str, message: str) -> Tuple[bool, str]:
+    try:
+        client = await self._get_client()
+            
+        max_msgs = self.config.get('max_messages_per_hour', 30)
+        if self.sent_count >= max_msgs:
+            return False, f"Достигнут лимит сообщений в час ({max_msgs})"
+            
+        current_time = time.time()
+        delay = self.config.get('delay_between_groups', 3)
+        if current_time - self.last_sent_time < delay:
+            await asyncio.sleep(delay - (current_time - self.last_sent_time))
+            
+        # ПРОБУЕМ ПОЛУЧИТЬ СУЩНОСТЬ С ТАЙМАУТОМ
         try:
-            client = await self._get_client()
-                
-            max_msgs = self.config.get('max_messages_per_hour', 30)
-            if self.sent_count >= max_msgs:
-                return False, f"Достигнут лимит сообщений в час ({max_msgs})"
-                
-            current_time = time.time()
-            delay = self.config.get('delay_between_groups', 3)
-            if current_time - self.last_sent_time < delay:
-                await asyncio.sleep(delay - (current_time - self.last_sent_time))
-                
-            try:
-                logger.info(f"🔍 Получаю сущность для {group}")
-                entity = await asyncio.wait_for(
-                    self.get_entity_by_id(group),
-                    timeout=10
-                )
-                logger.info(f"✅ Получена сущность для {group}")
-            except asyncio.TimeoutError:
-                return False, f"Таймаут получения сущности {group}"
-            except Exception as e:
-                return False, f"Группа не найдена: {str(e)}"
-                
-            try:
-                await asyncio.wait_for(
-                    client.send_message(entity, message),
-                    timeout=30
-                )
-                logger.info(f"✅ Отправлено в {group}")
-            except asyncio.TimeoutError:
-                return False, f"Таймаут отправки в {group}"
-            except errors.ChatWriteForbiddenError:
-                return False, "Нет прав на отправку"
-            except errors.RPCError as e:
-                return False, f"Ошибка Telegram: {str(e)}"
-                
-            self.sent_count += 1
-            self.last_sent_time = time.time()
-            
-            return True, "OK"
-            
+            logger.info(f"🔍 Получаю сущность для {group}")
+            entity = await asyncio.wait_for(
+                self.get_entity_by_id(group),
+                timeout=10
+            )
+            logger.info(f"✅ Получена сущность для {group}")
+        except asyncio.TimeoutError:
+            return False, f"Таймаут получения сущности {group} (10 сек)"
         except Exception as e:
-            logger.error(f"❌ Ошибка отправки в {group}: {e}")
-            return False, str(e)
+            return False, f"Группа не найдена: {str(e)}"
             
-    async def spam_loop(self):
-        logger.info("🔄 Запуск цикла рассылки")
+        # ОТПРАВЛЯЕМ С ТАЙМАУТОМ
+        try:
+            await asyncio.wait_for(
+                client.send_message(entity, message),
+                timeout=30
+            )
+            logger.info(f"✅ Отправлено в {group}")
+        except asyncio.TimeoutError:
+            return False, f"Таймаут отправки в {group} (30 сек)"
+        except errors.ChatWriteForbiddenError:
+            return False, "Нет прав на отправку"
+        except errors.RPCError as e:
+            return False, f"Ошибка Telegram: {str(e)}"
+            
+        self.sent_count += 1
+        self.last_sent_time = time.time()
         
-        while self.is_running:
-            try:
-                if self.is_paused:
-                    await asyncio.sleep(5)
-                    continue
-                    
-                if not self.config.get('enabled', False):
-                    logger.info("⏸️ Рассылка отключена в настройках")
-                    await asyncio.sleep(self.config.get('interval', 3600))
-                    continue
-                    
-                if not self.groups:
-                    logger.warning("⚠️ Нет групп для рассылки")
-                    await asyncio.sleep(self.config.get('interval', 3600))
-                    continue
-                    
-                message = self.config.get('message_text', '')
-                if not message:
-                    logger.warning("⚠️ Текст сообщения не указан!")
-                    await asyncio.sleep(self.config.get('interval', 3600))
-                    continue
+        return True, "OK"
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка отправки в {group}: {e}")
+        return False, str(e)
+            
+async def spam_loop(self):
+    logger.info("🔄 Запуск цикла рассылки")
+    
+    while self.is_running:
+        try:
+            if self.is_paused:
+                await asyncio.sleep(5)
+                continue
                 
-                logger.info(f"📤 Отправка в {len(self.groups)} групп")
-                success_count = 0
-                error_messages = []
+            if not self.config.get('enabled', False):
+                logger.info("⏸️ Рассылка отключена в настройках")
+                await asyncio.sleep(self.config.get('interval', 3600))
+                continue
                 
-                for group in self.groups:
-                    if not self.is_running:
-                        break
-                    
-                    logger.info(f"📤 Отправка в {group}...")
-                    success, error_msg = await self.send_to_group(group, message)
+            if not self.groups:
+                logger.warning("⚠️ Нет групп для рассылки")
+                await asyncio.sleep(self.config.get('interval', 3600))
+                continue
+                
+            message = self.config.get('message_text', '')
+            if not message:
+                logger.warning("⚠️ Текст сообщения не указан!")
+                await asyncio.sleep(self.config.get('interval', 3600))
+                continue
+            
+            logger.info(f"📤 Отправка в {len(self.groups)} групп")
+            success_count = 0
+            error_messages = []
+            
+            for group in self.groups:
+                if not self.is_running:
+                    break
+                
+                logger.info(f"📤 Отправка в {group}...")
+                
+                try:
+                    # ОБЕРТЫВАЕМ В ТАЙМАУТ!
+                    success, error_msg = await asyncio.wait_for(
+                        self.send_to_group(group, message),
+                        timeout=15
+                    )
                     
                     if success:
                         success_count += 1
@@ -350,22 +358,26 @@ class TelegramSpammer:
                         error_messages.append(f"{group}: {error_msg}")
                         logger.error(f"❌ Ошибка в {group}: {error_msg}")
                         
-                    await asyncio.sleep(self.config.get('delay_between_groups', 3))
+                except asyncio.TimeoutError:
+                    error_messages.append(f"{group}: Таймаут отправки (15 сек)")
+                    logger.error(f"❌ Таймаут в {group}")
                     
-                logger.info(f"✅ Успешно: {success_count}/{len(self.groups)}")
-                if error_messages:
-                    logger.warning(f"⚠️ Ошибки: {', '.join(error_messages[:5])}")
-                    
-                self.sent_count = 0
+                await asyncio.sleep(self.config.get('delay_between_groups', 3))
                 
-            except Exception as e:
-                logger.error(f"❌ Ошибка в цикле рассылки: {e}")
-                await asyncio.sleep(5)
+            logger.info(f"✅ Успешно: {success_count}/{len(self.groups)}")
+            if error_messages:
+                logger.warning(f"⚠️ Ошибки: {', '.join(error_messages[:5])}")
                 
-            if self.is_running:
-                interval = self.config.get('interval', 3600)
-                logger.info(f"⏱ Ожидание {interval} секунд")
-                await asyncio.sleep(interval)
+            self.sent_count = 0
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка в цикле рассылки: {e}")
+            await asyncio.sleep(5)
+            
+        if self.is_running:
+            interval = self.config.get('interval', 3600)
+            logger.info(f"⏱ Ожидание {interval} секунд")
+            await asyncio.sleep(interval)
                 
     async def start(self):
         if self.is_running:
