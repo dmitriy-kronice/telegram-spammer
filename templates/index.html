@@ -48,6 +48,8 @@
         .auth-row input { flex: 1; min-width: 150px; padding: 10px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: 14px; }
         .auth-status { font-weight: 600; margin-bottom: 10px; }
         @media (max-width: 768px) { .grid-2 { grid-template-columns: 1fr; } }
+        .error-msg { color: #ef4444; background: #fee2e2; padding: 8px 12px; border-radius: 6px; margin-top: 5px; display: none; }
+        .success-msg { color: #10b981; background: #d1fae5; padding: 8px 12px; border-radius: 6px; margin-top: 5px; display: none; }
     </style>
 </head>
 <body>
@@ -80,6 +82,7 @@
                     <input type="text" id="codeInput" placeholder="Код из Telegram" style="max-width: 150px;">
                     <button class="btn btn-success" onclick="verifyCode()">✅ Подтвердить</button>
                 </div>
+                <div id="authMessage" style="margin-top: 10px;"></div>
             </div>
         </div>
 
@@ -116,6 +119,7 @@
                     <label><input type="checkbox" id="enabled"> Включить рассылку</label>
                 </div>
                 <button class="btn btn-primary" onclick="saveConfig()">💾 Сохранить</button>
+                <div id="configMessage" style="margin-top: 10px;"></div>
             </div>
 
             <!-- Группы -->
@@ -133,6 +137,7 @@
                     <button class="btn btn-primary" onclick="loadGroups()">🔄 Обновить</button>
                     <button class="btn btn-danger" onclick="clearGroups()">🗑️ Очистить все</button>
                 </div>
+                <div id="groupMessage" style="margin-top: 10px;"></div>
             </div>
         </div>
 
@@ -155,12 +160,40 @@
     </div>
 
     <script>
-        // Автообновление
+        // ========== БАЗОВЫЙ URL ==========
+        const BASE_URL = window.location.origin;
+
+        // ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
+        function showMessage(elementId, message, type) {
+            const el = document.getElementById(elementId);
+            if (!el) return;
+            el.innerHTML = `<div class="${type}-msg" style="display:block;">${message}</div>`;
+            setTimeout(() => { el.innerHTML = ''; }, 5000);
+        }
+
+        function addLog(message, type = 'info') {
+            const logs = document.getElementById('logs');
+            const entry = document.createElement('div');
+            const typeMap = {
+                'error': 'log-error',
+                'success': 'log-success',
+                'warning': 'log-warning',
+                'info': ''
+            };
+            entry.className = `log-entry ${typeMap[type] || ''}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logs.appendChild(entry);
+            logs.scrollTop = logs.scrollHeight;
+            if (logs.children.length > 100) {
+                logs.removeChild(logs.children[0]);
+            }
+        }
+
+        // ========== АВТООБНОВЛЕНИЕ ==========
         setInterval(refreshStatus, 5000);
         setInterval(loadGroups, 10000);
         setInterval(checkAuthStatus, 5000);
 
-        // Загрузка при старте
         window.onload = function() {
             refreshStatus();
             loadGroups();
@@ -168,20 +201,10 @@
             checkAuthStatus();
         };
 
-        // Логи
-        function addLog(message, type = 'info') {
-            const logs = document.getElementById('logs');
-            const entry = document.createElement('div');
-            entry.className = `log-entry log-${type}`;
-            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
-            logs.appendChild(entry);
-            logs.scrollTop = logs.scrollHeight;
-        }
-
-        // Авторизация
+        // ========== АВТОРИЗАЦИЯ ==========
         async function checkAuthStatus() {
             try {
-                const r = await fetch('/api/auth/status');
+                const r = await fetch(`${BASE_URL}/api/auth/status`);
                 const d = await r.json();
                 if (d.success) {
                     const el = document.getElementById('authStatus');
@@ -194,42 +217,75 @@
                     }
                     document.getElementById('authPhone').textContent = d.phone ? `(${d.phone})` : '';
                 }
-            } catch(e) { console.error(e); }
+            } catch(e) {
+                console.error('Auth status error:', e);
+            }
         }
 
         async function sendCode() {
             const phone = document.getElementById('phoneInput').value.trim();
-            if (!phone) return addLog('❌ Введите номер телефона', 'error');
+            if (!phone) {
+                showMessage('authMessage', '❌ Введите номер телефона', 'error');
+                return;
+            }
+
             try {
-                const r = await fetch('/api/auth/send', {
+                addLog(`📱 Отправка кода на ${phone}...`, 'info');
+                const r = await fetch(`${BASE_URL}/api/auth/send`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ phone })
                 });
                 const d = await r.json();
-                addLog(d.success ? '✅ ' + d.message : '❌ ' + d.error, d.success ? 'success' : 'error');
-            } catch(e) { addLog('❌ ' + e, 'error'); }
+                if (d.success) {
+                    showMessage('authMessage', '✅ ' + d.message, 'success');
+                    addLog('✅ ' + d.message, 'success');
+                    document.getElementById('codeInput').focus();
+                } else {
+                    showMessage('authMessage', '❌ ' + d.error, 'error');
+                    addLog('❌ ' + d.error, 'error');
+                }
+            } catch(e) {
+                const msg = 'Ошибка соединения: ' + e.message;
+                showMessage('authMessage', '❌ ' + msg, 'error');
+                addLog('❌ ' + msg, 'error');
+            }
         }
 
         async function verifyCode() {
             const code = document.getElementById('codeInput').value.trim();
-            if (!code) return addLog('❌ Введите код', 'error');
+            if (!code) {
+                showMessage('authMessage', '❌ Введите код', 'error');
+                return;
+            }
+
             try {
-                const r = await fetch('/api/auth/verify', {
+                addLog('🔐 Подтверждение кода...', 'info');
+                const r = await fetch(`${BASE_URL}/api/auth/verify`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ code })
                 });
                 const d = await r.json();
-                addLog(d.success ? '✅ ' + d.message : '❌ ' + d.error, d.success ? 'success' : 'error');
-                if (d.success) checkAuthStatus();
-            } catch(e) { addLog('❌ ' + e, 'error'); }
+                if (d.success) {
+                    showMessage('authMessage', '✅ ' + d.message, 'success');
+                    addLog('✅ ' + d.message, 'success');
+                    checkAuthStatus();
+                } else {
+                    showMessage('authMessage', '❌ ' + d.error, 'error');
+                    addLog('❌ ' + d.error, 'error');
+                }
+            } catch(e) {
+                const msg = 'Ошибка соединения: ' + e.message;
+                showMessage('authMessage', '❌ ' + msg, 'error');
+                addLog('❌ ' + msg, 'error');
+            }
         }
 
-        // Статус
+        // ========== СТАТУС ==========
         async function refreshStatus() {
             try {
-                const r = await fetch('/api/status');
+                const r = await fetch(`${BASE_URL}/api/status`);
                 const d = await r.json();
                 if (d.success) {
                     const s = d.status;
@@ -246,18 +302,20 @@
                         badge.className = 'status-badge status-stopped';
                         badge.textContent = '⏹️ Остановлен';
                     }
-                    document.getElementById('statGroups').textContent = s.groups_count;
+                    document.getElementById('statGroups').textContent = s.groups_count || 0;
                     document.getElementById('statStatus').textContent = s.enabled ? 'Активен' : 'Отключен';
-                    document.getElementById('statInterval').textContent = s.interval;
+                    document.getElementById('statInterval').textContent = s.interval || 0;
                     document.getElementById('statConnected').textContent = s.is_connected ? '✅' : '❌';
                 }
-            } catch(e) { console.error(e); }
+            } catch(e) {
+                console.error('Status error:', e);
+            }
         }
 
-        // Конфиг
+        // ========== КОНФИГ ==========
         async function loadConfig() {
             try {
-                const r = await fetch('/api/config');
+                const r = await fetch(`${BASE_URL}/api/config`);
                 const d = await r.json();
                 if (d.success) {
                     const c = d.config;
@@ -270,7 +328,9 @@
                     document.getElementById('enabled').checked = c.enabled || false;
                     if (c.phone) document.getElementById('phoneInput').value = c.phone;
                 }
-            } catch(e) { console.error(e); }
+            } catch(e) {
+                console.error('Load config error:', e);
+            }
         }
 
         async function saveConfig() {
@@ -283,21 +343,33 @@
                 max_messages_per_hour: parseInt(document.getElementById('maxPerHour').value) || 30,
                 enabled: document.getElementById('enabled').checked
             };
+
             try {
-                const r = await fetch('/api/config', {
+                const r = await fetch(`${BASE_URL}/api/config`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(config)
                 });
                 const d = await r.json();
-                addLog(d.success ? '✅ Настройки сохранены' : '❌ ' + d.error, d.success ? 'success' : 'error');
-            } catch(e) { addLog('❌ ' + e, 'error'); }
+                if (d.success) {
+                    showMessage('configMessage', '✅ Настройки сохранены', 'success');
+                    addLog('✅ Настройки сохранены', 'success');
+                    refreshStatus();
+                } else {
+                    showMessage('configMessage', '❌ ' + d.error, 'error');
+                    addLog('❌ ' + d.error, 'error');
+                }
+            } catch(e) {
+                const msg = 'Ошибка соединения: ' + e.message;
+                showMessage('configMessage', '❌ ' + msg, 'error');
+                addLog('❌ ' + msg, 'error');
+            }
         }
 
-        // Группы
+        // ========== ГРУППЫ ==========
         async function loadGroups() {
             try {
-                const r = await fetch('/api/groups');
+                const r = await fetch(`${BASE_URL}/api/groups`);
                 const d = await r.json();
                 if (d.success) {
                     const container = document.getElementById('groupsList');
@@ -320,102 +392,178 @@
                     });
                     document.getElementById('statGroups').textContent = d.groups.length;
                 }
-            } catch(e) { console.error(e); }
+            } catch(e) {
+                console.error('Load groups error:', e);
+            }
         }
 
         async function addGroup() {
             const input = document.getElementById('groupInput');
             const group = input.value.trim();
-            if (!group) return addLog('❌ Введите группу', 'error');
+            if (!group) {
+                showMessage('groupMessage', '❌ Введите название группы', 'error');
+                return;
+            }
+
             try {
-                const r = await fetch('/api/groups', {
+                const r = await fetch(`${BASE_URL}/api/groups`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ group })
                 });
                 const d = await r.json();
-                addLog(d.success ? '✅ ' + d.message : '❌ ' + d.error, d.success ? 'success' : 'error');
-                if (d.success) { input.value = ''; loadGroups(); refreshStatus(); }
-            } catch(e) { addLog('❌ ' + e, 'error'); }
+                if (d.success) {
+                    showMessage('groupMessage', '✅ ' + d.message, 'success');
+                    addLog('✅ ' + d.message, 'success');
+                    input.value = '';
+                    loadGroups();
+                    refreshStatus();
+                } else {
+                    showMessage('groupMessage', '❌ ' + d.error, 'error');
+                    addLog('❌ ' + d.error, 'error');
+                }
+            } catch(e) {
+                const msg = 'Ошибка соединения: ' + e.message;
+                showMessage('groupMessage', '❌ ' + msg, 'error');
+                addLog('❌ ' + msg, 'error');
+            }
         }
 
         async function removeGroup(group) {
             if (!confirm(`Удалить группу ${group}?`)) return;
+
             try {
-                const r = await fetch('/api/groups', {
+                const r = await fetch(`${BASE_URL}/api/groups`, {
                     method: 'DELETE',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ group })
                 });
                 const d = await r.json();
-                addLog(d.success ? '✅ ' + d.message : '❌ ' + d.error, d.success ? 'success' : 'error');
-                if (d.success) { loadGroups(); refreshStatus(); }
-            } catch(e) { addLog('❌ ' + e, 'error'); }
+                if (d.success) {
+                    showMessage('groupMessage', '✅ ' + d.message, 'success');
+                    addLog('✅ ' + d.message, 'success');
+                    loadGroups();
+                    refreshStatus();
+                } else {
+                    showMessage('groupMessage', '❌ ' + d.error, 'error');
+                    addLog('❌ ' + d.error, 'error');
+                }
+            } catch(e) {
+                const msg = 'Ошибка соединения: ' + e.message;
+                showMessage('groupMessage', '❌ ' + msg, 'error');
+                addLog('❌ ' + msg, 'error');
+            }
         }
 
         async function clearGroups() {
             if (!confirm('Удалить все группы?')) return;
+
             try {
-                const r = await fetch('/api/clear_groups', { method: 'POST' });
+                const r = await fetch(`${BASE_URL}/api/clear_groups`, { method: 'POST' });
                 const d = await r.json();
-                addLog(d.success ? '✅ ' + d.message : '❌ ' + d.error, d.success ? 'success' : 'error');
-                if (d.success) loadGroups();
-            } catch(e) { addLog('❌ ' + e, 'error'); }
+                if (d.success) {
+                    showMessage('groupMessage', '✅ ' + d.message, 'success');
+                    addLog('✅ ' + d.message, 'success');
+                    loadGroups();
+                } else {
+                    showMessage('groupMessage', '❌ ' + d.error, 'error');
+                    addLog('❌ ' + d.error, 'error');
+                }
+            } catch(e) {
+                const msg = 'Ошибка соединения: ' + e.message;
+                showMessage('groupMessage', '❌ ' + msg, 'error');
+                addLog('❌ ' + msg, 'error');
+            }
         }
 
-        // Тест
+        // ========== ТЕСТ ==========
         async function testGroup(group) {
-            const message = prompt('Введите тестовое сообщение:');
+            const message = prompt('Введите тестовое сообщение для ' + group + ':');
             if (!message) return;
+
             try {
-                const r = await fetch('/api/test', {
+                const r = await fetch(`${BASE_URL}/api/test`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ group, message })
                 });
                 const d = await r.json();
-                addLog(d.success ? '✅ Отправлено в ' + group : '❌ ' + d.error, d.success ? 'success' : 'error');
-            } catch(e) { addLog('❌ ' + e, 'error'); }
+                if (d.success) {
+                    addLog('✅ Отправлено в ' + group, 'success');
+                    showMessage('groupMessage', '✅ Отправлено в ' + group, 'success');
+                } else {
+                    addLog('❌ ' + d.error, 'error');
+                    showMessage('groupMessage', '❌ ' + d.error, 'error');
+                }
+            } catch(e) {
+                const msg = 'Ошибка соединения: ' + e.message;
+                showMessage('groupMessage', '❌ ' + msg, 'error');
+                addLog('❌ ' + msg, 'error');
+            }
         }
 
-        // Управление рассылкой
+        // ========== УПРАВЛЕНИЕ РАССЫЛКОЙ ==========
         async function startSpam() {
             try {
-                const r = await fetch('/api/start', { method: 'POST' });
+                const r = await fetch(`${BASE_URL}/api/start`, { method: 'POST' });
                 const d = await r.json();
-                addLog(d.success ? '✅ ' + d.message : '❌ ' + d.error, d.success ? 'success' : 'error');
-                if (d.success) refreshStatus();
-            } catch(e) { addLog('❌ ' + e, 'error'); }
+                if (d.success) {
+                    addLog('✅ ' + d.message, 'success');
+                    refreshStatus();
+                } else {
+                    addLog('❌ ' + d.error, 'error');
+                }
+            } catch(e) {
+                addLog('❌ Ошибка соединения: ' + e.message, 'error');
+            }
         }
 
         async function stopSpam() {
             try {
-                const r = await fetch('/api/stop', { method: 'POST' });
+                const r = await fetch(`${BASE_URL}/api/stop`, { method: 'POST' });
                 const d = await r.json();
-                addLog(d.success ? '✅ ' + d.message : '❌ ' + d.error, d.success ? 'success' : 'error');
-                if (d.success) refreshStatus();
-            } catch(e) { addLog('❌ ' + e, 'error'); }
+                if (d.success) {
+                    addLog('✅ ' + d.message, 'success');
+                    refreshStatus();
+                } else {
+                    addLog('❌ ' + d.error, 'error');
+                }
+            } catch(e) {
+                addLog('❌ Ошибка соединения: ' + e.message, 'error');
+            }
         }
 
         async function pauseSpam() {
             try {
-                const r = await fetch('/api/pause', { method: 'POST' });
+                const r = await fetch(`${BASE_URL}/api/pause`, { method: 'POST' });
                 const d = await r.json();
-                addLog(d.success ? '✅ ' + d.message : '❌ ' + d.error, d.success ? 'success' : 'error');
-                if (d.success) refreshStatus();
-            } catch(e) { addLog('❌ ' + e, 'error'); }
+                if (d.success) {
+                    addLog('✅ ' + d.message, 'success');
+                    refreshStatus();
+                } else {
+                    addLog('❌ ' + d.error, 'error');
+                }
+            } catch(e) {
+                addLog('❌ Ошибка соединения: ' + e.message, 'error');
+            }
         }
 
         async function resumeSpam() {
             try {
-                const r = await fetch('/api/resume', { method: 'POST' });
+                const r = await fetch(`${BASE_URL}/api/resume`, { method: 'POST' });
                 const d = await r.json();
-                addLog(d.success ? '✅ ' + d.message : '❌ ' + d.error, d.success ? 'success' : 'error');
-                if (d.success) refreshStatus();
-            } catch(e) { addLog('❌ ' + e, 'error'); }
+                if (d.success) {
+                    addLog('✅ ' + d.message, 'success');
+                    refreshStatus();
+                } else {
+                    addLog('❌ ' + d.error, 'error');
+                }
+            } catch(e) {
+                addLog('❌ Ошибка соединения: ' + e.message, 'error');
+            }
         }
 
-        // Enter
+        // ========== ENTER ==========
         document.getElementById('phoneInput').addEventListener('keypress', e => { if (e.key === 'Enter') sendCode(); });
         document.getElementById('codeInput').addEventListener('keypress', e => { if (e.key === 'Enter') verifyCode(); });
         document.getElementById('groupInput').addEventListener('keypress', e => { if (e.key === 'Enter') addGroup(); });
