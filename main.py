@@ -43,9 +43,43 @@ def index():
 
 @app.route('/api/status')
 def get_status():
-    if not spammer:
-        return jsonify({'success': False, 'error': 'Spammer не инициализирован'})
-    return jsonify({'success': True, 'status': spammer.get_status()})
+    """Получить статус"""
+    try:
+        if not spammer:
+            return jsonify({
+                'success': False,
+                'error': 'Spammer не инициализирован'
+            })
+        
+        try:
+            status = spammer.get_status()
+        except AttributeError:
+            status = {
+                'running': False,
+                'paused': False,
+                'groups_count': len(spammer.groups) if hasattr(spammer, 'groups') else 0,
+                'groups': spammer.groups if hasattr(spammer, 'groups') else [],
+                'message_text': spammer.config.get('message_text', '') if hasattr(spammer, 'config') else '',
+                'interval': spammer.config.get('interval', 3600) if hasattr(spammer, 'config') else 3600,
+                'enabled': spammer.config.get('enabled', False) if hasattr(spammer, 'config') else False,
+                'delay_between_groups': spammer.config.get('delay_between_groups', 3) if hasattr(spammer, 'config') else 3,
+                'max_messages_per_hour': spammer.config.get('max_messages_per_hour', 30) if hasattr(spammer, 'config') else 30,
+                'is_connected': spammer.client and spammer.client.is_connected() if spammer.client else False,
+                'is_authorized': spammer.config.get('is_authorized', False) if hasattr(spammer, 'config') else False,
+                'phone': spammer.config.get('phone', '') if hasattr(spammer, 'config') else '',
+                'auth_waiting': spammer._auth_waiting if hasattr(spammer, '_auth_waiting') else False
+            }
+        
+        return jsonify({
+            'success': True,
+            'status': status
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })
 
 
 @app.route('/api/config', methods=['GET', 'POST'])
