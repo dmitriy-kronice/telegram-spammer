@@ -489,8 +489,8 @@ async def send_to_group(self, group: str, message: str) -> Tuple[bool, str]:
     def resume(self):
         self.is_paused = False
         logger.info("▶️ Продолжено")
-
     def get_status(self) -> Dict:
+        """Получение статуса для веб-интерфейса"""
         is_authorized = self.config.get('is_authorized', False)
         if self.client and self.client.is_connected():
             try:
@@ -500,7 +500,7 @@ async def send_to_group(self, group: str, message: str) -> Tuple[bool, str]:
                 loop.close()
             except:
                 pass
-
+                
         return {
             'running': self.is_running,
             'paused': self.is_paused,
@@ -514,5 +514,5 @@ async def send_to_group(self, group: str, message: str) -> Tuple[bool, str]:
             'is_connected': self.client and self.client.is_connected() if self.client else False,
             'is_authorized': is_authorized,
             'phone': self.config.get('phone', ''),
-            'auth_waiting': self._auth_waiting
+            'auth_waiting': self._auth_waiting if hasattr(self, '_auth_waiting') else False
         }
