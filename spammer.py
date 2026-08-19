@@ -354,20 +354,31 @@ async def spam_loop(self):
             await asyncio.sleep(interval)
                 
     async def start(self):
+        """Запуск рассылки"""
         if self.is_running:
+            logger.warning("⚠️ Рассылка уже запущена")
             return
             
-        success, error = await self._ensure_client()
-        if not success:
-            logger.error(f"❌ {error}")
-            return
+        try:
+            success, error = await self._ensure_client()
+            if not success:
+                logger.error(f"❌ {error}")
+                return
+                
+            if not self.config.get('message_text'):
+                logger.error("❌ Текст сообщения не указан!")
+                return
+                
+            self.is_running = True
+            self.sent_count = 0
+            self.last_sent_time = 0
             
-        self.is_running = True
-        self.sent_count = 0
-        self.last_sent_time = 0
-        
-        self.task = asyncio.create_task(self.spam_loop())
-        logger.info("🚀 Рассылка запущена")
+            self.task = asyncio.create_task(self.spam_loop())
+            logger.info("🚀 Рассылка запущена")
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка запуска: {e}")
+            self.is_running = False
             
     async def stop(self):
         self.is_running = False
