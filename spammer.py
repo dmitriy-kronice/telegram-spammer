@@ -237,9 +237,17 @@ class TelegramSpammer:
     async def get_entity_by_id(self, entity_id):
         try:
             logger.info(f"🔍 get_entity_by_id: Начинаю для {entity_id}")
-            client = await self._get_client()
-            logger.info(f"🔍 get_entity_by_id: Клиент получен")
-
+            
+            # Проверяем клиент один раз
+            if not self.client or not self.client.is_connected():
+                logger.info("🔍 get_entity_by_id: Клиент не подключен, подключаю...")
+                success, error = await self._ensure_client()
+                if not success:
+                    raise Exception(error)
+            
+            client = self.client
+            logger.info(f"🔍 get_entity_by_id: Клиент готов")
+            
             if isinstance(entity_id, str) and entity_id.startswith('-100'):
                 logger.info(f"🔍 get_entity_by_id: Пробую как супергруппу {entity_id}")
                 result = await client.get_entity(int(entity_id))
