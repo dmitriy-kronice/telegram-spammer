@@ -6,6 +6,9 @@ import asyncio
 import threading
 import json
 from spammer import TelegramSpammer
+from flask_cors import CORS
+
+
 
 # Настройка логов
 logging.basicConfig(
@@ -15,6 +18,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+CORS(app) 
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your-secret-key-change-this')
 app.config['SESSION_TYPE'] = 'filesystem'
 Session(app)
