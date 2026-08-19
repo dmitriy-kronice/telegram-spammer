@@ -149,36 +149,48 @@ def verify_auth_code():
     success, message = run_async()
     return jsonify({'success': success, 'message': message})
 
-
 @app.route('/api/auth/status')
 def auth_status():
-    if not spammer:
-        return jsonify({'success': False, 'error': 'Spammer не инициализирован'})
-
-try:
-    status = spammer.get_status()
-except AttributeError:
-    # Если метода нет - возвращаем базовый статус
-    status = {
-        'running': False,
-        'paused': False,
-        'groups_count': len(spammer.groups) if hasattr(spammer, 'groups') else 0,
-        'groups': spammer.groups if hasattr(spammer, 'groups') else [],
-        'message_text': spammer.config.get('message_text', '') if hasattr(spammer, 'config') else '',
-        'interval': 3600,
-        'enabled': False,
-        'delay_between_groups': 3,
-        'max_messages_per_hour': 30,
-        'is_connected': False,
-        'is_authorized': False,
-        'phone': '',
-        'auth_waiting': False
-    }
-    return jsonify({
-        'success': True,
-        'is_authorized': status.get('is_authorized', False),
-        'phone': status.get('phone', '')
-    })
+    """Проверить статус авторизации"""
+    try:
+        if not spammer:
+            return jsonify({
+                'success': False,
+                'error': 'Spammer не инициализирован'
+            })
+        
+        try:
+            status = spammer.get_status()
+        except AttributeError:
+            # Если метода нет - возвращаем базовый статус
+            status = {
+                'running': False,
+                'paused': False,
+                'groups_count': len(spammer.groups) if hasattr(spammer, 'groups') else 0,
+                'groups': spammer.groups if hasattr(spammer, 'groups') else [],
+                'message_text': spammer.config.get('message_text', '') if hasattr(spammer, 'config') else '',
+                'interval': 3600,
+                'enabled': False,
+                'delay_between_groups': 3,
+                'max_messages_per_hour': 30,
+                'is_connected': False,
+                'is_authorized': False,
+                'phone': '',
+                'auth_waiting': False
+            }
+        
+        return jsonify({
+            'success': True,
+            'is_authorized': status.get('is_authorized', False),
+            'phone': status.get('phone', ''),
+            'auth_waiting': status.get('auth_waiting', False)
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })
 
 
 @app.route('/api/start', methods=['POST'])
