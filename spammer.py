@@ -3,10 +3,8 @@ import json
 import logging
 import time
 import os
-from datetime import datetime
 from typing import List, Dict, Optional, Tuple
 from telethon import TelegramClient, errors
-from telethon.tl.types import Message
 
 # Создаем папку для логов
 os.makedirs('logs', exist_ok=True)
@@ -36,7 +34,6 @@ class TelegramSpammer:
         self._auth_phone = None
         self._auth_phone_code_hash = None
         self._auth_waiting = False
-        self._last_sent_code_time = 0
         
         self.ensure_files()
         self.load_config()
@@ -51,8 +48,8 @@ class TelegramSpammer:
                 "api_hash": "",
                 "session_name": "spammer_session",
                 "phone": "",
-                "message_text": "🔥 Привет! Подписывайся на мой канал: https://t.me/my_channel",
-                "interval": 3600,
+                "message_text": "🔥 Привет! Подписывайся на мой канал!",
+                "interval": 10,
                 "delay_between_groups": 3,
                 "max_messages_per_hour": 30,
                 "enabled": False,
@@ -79,8 +76,8 @@ class TelegramSpammer:
                 "api_hash": "",
                 "session_name": "spammer_session",
                 "phone": "",
-                "message_text": "🔥 Привет! Подписывайся на мой канал: https://t.me/my_channel",
-                "interval": 3600,
+                "message_text": "🔥 Привет! Подписывайся на мой канал!",
+                "interval": 10,
                 "delay_between_groups": 3,
                 "max_messages_per_hour": 30,
                 "enabled": False,
@@ -142,22 +139,15 @@ class TelegramSpammer:
                 self._auth_waiting = False
                 return True, "Уже авторизован"
             
-            try:
-                current_time = time.time()
-                if current_time - self._last_sent_code_time < 30:
-                    return False, "Код уже был отправлен. Подождите 30 секунд."
+            result = await self.client.send_code_request(phone)
+            self._auth_phone_code_hash = result.phone_code_hash
+            logger.info(f"✅ Код отправлен на {phone}")
+            return True, "Код подтверждения отправлен на ваш номер"
                 
-                result = await self.client.send_code_request(phone)
-                self._auth_phone_code_hash = result.phone_code_hash
-                self._last_sent_code_time = current_time
-                logger.info(f"✅ Код отправлен на {phone}")
-                return True, "Код подтверждения отправлен на ваш номер"
-                
-            except errors.PhoneNumberInvalidError:
-                return False, "Неверный номер телефона"
-            except errors.FloodWaitError as e:
-                return False, f"Слишком много попыток. Подождите {e.seconds} секунд"
-                
+        except errors.PhoneNumberInvalidError:
+            return False, "Неверный номер телефона"
+        except errors.FloodWaitError as e:
+            return False, f"Слишком много попыток. Подождите {e.seconds} секунд"
         except Exception as e:
             logger.error(f"❌ Ошибка отправки кода: {e}")
             return False, f"Ошибка: {str(e)}"
@@ -165,36 +155,32 @@ class TelegramSpammer:
     async def verify_auth_code(self, code: str) -> Tuple[bool, str]:
         try:
             if not self.client:
-                return False, "Клиент не инициализирован. Сначала отправьте код"
+                return False, "Клиент не инициализирован"
                 
             if not self._auth_phone_code_hash:
-                return False, "Сначала запросите код подтверждения"
+                return False, "Сначала запросите код"
                 
             if not self.client.is_connected():
                 await self.client.connect()
                 
-            try:
-                await self.client.sign_in(
-                    phone=self._auth_phone,
-                    code=code,
-                    phone_code_hash=self._auth_phone_code_hash
-                )
+            await self.client.sign_in(
+                phone=self._auth_phone,
+                code=code,
+                phone_code_hash=self._auth_phone_code_hash
+            )
+            
+            self.config['phone'] = self._auth_phone
+            self.config['is_authorized'] = True
+            self.save_config()
+            self._auth_waiting = False
+            
+            logger.info("✅ Авторизация успешна!")
+            return True, "Авторизация успешна!"
                 
-                self.config['phone'] = self._auth_phone
-                self.config['is_authorized'] = True
-                self.save_config()
-                self._auth_waiting = False
-                
-                logger.info("✅ Авторизация успешна!")
-                return True, "Авторизация успешна! Теперь можно запускать рассылку."
-                
-            except errors.SessionPasswordNeededError:
-                return False, "Требуется двухфакторная аутентификация (2FA). Пока не поддерживается"
-            except errors.PhoneCodeInvalidError:
-                return False, "Неверный код подтверждения. Попробуйте еще раз"
-            except errors.PhoneCodeExpiredError:
-                return False, "Код истек. Запросите новый код"
-                
+        except errors.PhoneCodeInvalidError:
+            return False, "Неверный код"
+        except errors.PhoneCodeExpiredError:
+            return False, "Код истек"
         except Exception as e:
             logger.error(f"❌ Ошибка подтверждения кода: {e}")
             return False, f"Ошибка: {str(e)}"
@@ -218,20 +204,16 @@ class TelegramSpammer:
                 
                 if not await self.client.is_user_authorized():
                     if self.config.get('phone'):
-                        try:
-                            await self.client.start(phone=self.config['phone'])
-                            self.config['is_authorized'] = True
-                            self.save_config()
-                            logger.info("✅ Авторизован по сохраненной сессии")
-                        except Exception as e:
-                            return False, f"Требуется авторизация. Ошибка: {str(e)}"
+                        await self.client.start(phone=self.config['phone'])
+                        self.config['is_authorized'] = True
+                        self.save_config()
+                        logger.info("✅ Авторизован по сессии")
                     else:
                         return False, "Требуется авторизация"
                     
                 return True, "OK"
-                
             except Exception as e:
-                logger.error(f"❌ Ошибка подключения клиента: {e}")
+                logger.error(f"❌ Ошибка: {e}")
                 return False, str(e)
                 
     async def _get_client(self):
@@ -252,157 +234,132 @@ class TelegramSpammer:
                 return await client.get_entity(entity_id)
             else:
                 return await client.get_entity(entity_id)
-                
-        except ValueError as e:
-            raise Exception(f"Не удалось найти сущность: {str(e)}")
-        except errors.FloodWaitError as e:
-            raise Exception(f"FloodWait: ждите {e.seconds} секунд")
         except Exception as e:
-            raise Exception(f"Ошибка получения сущности: {str(e)}")
+            raise Exception(f"Группа не найдена: {str(e)}")
                 
-async def send_to_group(self, group: str, message: str) -> Tuple[bool, str]:
-    try:
-        client = await self._get_client()
-            
-        max_msgs = self.config.get('max_messages_per_hour', 30)
-        if self.sent_count >= max_msgs:
-            return False, f"Достигнут лимит сообщений в час ({max_msgs})"
-            
-        current_time = time.time()
-        delay = self.config.get('delay_between_groups', 3)
-        if current_time - self.last_sent_time < delay:
-            await asyncio.sleep(delay - (current_time - self.last_sent_time))
-            
-        # ПРОБУЕМ ПОЛУЧИТЬ СУЩНОСТЬ С ТАЙМАУТОМ
+    async def send_to_group(self, group: str, message: str) -> Tuple[bool, str]:
         try:
-            logger.info(f"🔍 Получаю сущность для {group}")
-            entity = await asyncio.wait_for(
-                self.get_entity_by_id(group),
-                timeout=10
-            )
-            logger.info(f"✅ Получена сущность для {group}")
-        except asyncio.TimeoutError:
-            return False, f"Таймаут получения сущности {group} (10 сек)"
-        except Exception as e:
-            return False, f"Группа не найдена: {str(e)}"
+            client = await self._get_client()
             
-        # ОТПРАВЛЯЕМ С ТАЙМАУТОМ
-        try:
-            await asyncio.wait_for(
-                client.send_message(entity, message),
-                timeout=30
-            )
+            max_msgs = self.config.get('max_messages_per_hour', 30)
+            if self.sent_count >= max_msgs:
+                return False, f"Лимит {max_msgs} сообщений в час"
+                
+            current_time = time.time()
+            delay = self.config.get('delay_between_groups', 3)
+            if current_time - self.last_sent_time < delay:
+                await asyncio.sleep(delay - (current_time - self.last_sent_time))
+            
+            # Получаем сущность с таймаутом
+            try:
+                entity = await asyncio.wait_for(
+                    self.get_entity_by_id(group),
+                    timeout=10
+                )
+            except asyncio.TimeoutError:
+                return False, "Таймаут получения группы"
+            except Exception as e:
+                return False, str(e)
+            
+            # Отправляем с таймаутом
+            try:
+                await asyncio.wait_for(
+                    client.send_message(entity, message),
+                    timeout=30
+                )
+            except asyncio.TimeoutError:
+                return False, "Таймаут отправки"
+            except errors.ChatWriteForbiddenError:
+                return False, "Нет прав на отправку"
+            except errors.RPCError as e:
+                return False, f"Ошибка Telegram: {str(e)}"
+            
+            self.sent_count += 1
+            self.last_sent_time = time.time()
+            
             logger.info(f"✅ Отправлено в {group}")
-        except asyncio.TimeoutError:
-            return False, f"Таймаут отправки в {group} (30 сек)"
-        except errors.ChatWriteForbiddenError:
-            return False, "Нет прав на отправку"
-        except errors.RPCError as e:
-            return False, f"Ошибка Telegram: {str(e)}"
-            
-        self.sent_count += 1
-        self.last_sent_time = time.time()
-        
-        return True, "OK"
-        
-    except Exception as e:
-        logger.error(f"❌ Ошибка отправки в {group}: {e}")
-        return False, str(e)
-            
-async def spam_loop(self):
-    logger.info("🔄 Запуск цикла рассылки")
-    
-    while self.is_running:
-        try:
-            if self.is_paused:
-                await asyncio.sleep(5)
-                continue
-                
-            if not self.config.get('enabled', False):
-                logger.info("⏸️ Рассылка отключена в настройках")
-                await asyncio.sleep(self.config.get('interval', 3600))
-                continue
-                
-            if not self.groups:
-                logger.warning("⚠️ Нет групп для рассылки")
-                await asyncio.sleep(self.config.get('interval', 3600))
-                continue
-                
-            message = self.config.get('message_text', '')
-            if not message:
-                logger.warning("⚠️ Текст сообщения не указан!")
-                await asyncio.sleep(self.config.get('interval', 3600))
-                continue
-            
-            logger.info(f"📤 Отправка в {len(self.groups)} групп")
-            success_count = 0
-            error_messages = []
-            
-            for group in self.groups:
-                if not self.is_running:
-                    break
-                
-                logger.info(f"📤 Отправка в {group}...")
-                
-                try:
-                    # ОБЕРТЫВАЕМ В ТАЙМАУТ!
-                    success, error_msg = await asyncio.wait_for(
-                        self.send_to_group(group, message),
-                        timeout=15
-                    )
-                    
-                    if success:
-                        success_count += 1
-                        logger.info(f"✅ Успешно отправлено в {group}")
-                    else:
-                        error_messages.append(f"{group}: {error_msg}")
-                        logger.error(f"❌ Ошибка в {group}: {error_msg}")
-                        
-                except asyncio.TimeoutError:
-                    error_messages.append(f"{group}: Таймаут отправки (15 сек)")
-                    logger.error(f"❌ Таймаут в {group}")
-                    
-                await asyncio.sleep(self.config.get('delay_between_groups', 3))
-                
-            logger.info(f"✅ Успешно: {success_count}/{len(self.groups)}")
-            if error_messages:
-                logger.warning(f"⚠️ Ошибки: {', '.join(error_messages[:5])}")
-                
-            self.sent_count = 0
+            return True, "OK"
             
         except Exception as e:
-            logger.error(f"❌ Ошибка в цикле рассылки: {e}")
-            await asyncio.sleep(5)
+            logger.error(f"❌ Ошибка: {e}")
+            return False, str(e)
             
-        if self.is_running:
-            interval = self.config.get('interval', 3600)
-            logger.info(f"⏱ Ожидание {interval} секунд")
-            await asyncio.sleep(interval)
+    async def spam_loop(self):
+        logger.info("🔄 Запуск цикла рассылки")
+        
+        while self.is_running:
+            try:
+                if self.is_paused:
+                    await asyncio.sleep(5)
+                    continue
+                    
+                if not self.config.get('enabled', False):
+                    logger.info("⏸️ Рассылка отключена")
+                    await asyncio.sleep(self.config.get('interval', 10))
+                    continue
+                    
+                if not self.groups:
+                    logger.warning("⚠️ Нет групп")
+                    await asyncio.sleep(self.config.get('interval', 10))
+                    continue
+                    
+                message = self.config.get('message_text', '')
+                if not message:
+                    logger.warning("⚠️ Нет текста")
+                    await asyncio.sleep(self.config.get('interval', 10))
+                    continue
+                
+                logger.info(f"📤 Отправка в {len(self.groups)} групп")
+                success_count = 0
+                
+                for group in self.groups:
+                    if not self.is_running:
+                        break
+                    
+                    logger.info(f"📤 Отправка в {group}...")
+                    
+                    try:
+                        success, error = await asyncio.wait_for(
+                            self.send_to_group(group, message),
+                            timeout=20
+                        )
+                        if success:
+                            success_count += 1
+                            logger.info(f"✅ Успешно в {group}")
+                        else:
+                            logger.error(f"❌ Ошибка в {group}: {error}")
+                    except asyncio.TimeoutError:
+                        logger.error(f"❌ Таймаут в {group}")
+                        
+                    await asyncio.sleep(self.config.get('delay_between_groups', 3))
+                    
+                logger.info(f"✅ Успешно: {success_count}/{len(self.groups)}")
+                self.sent_count = 0
+                
+            except Exception as e:
+                logger.error(f"❌ Ошибка цикла: {e}")
+                await asyncio.sleep(5)
+                
+            if self.is_running:
+                interval = self.config.get('interval', 10)
+                logger.info(f"⏱ Ожидание {interval} сек")
+                await asyncio.sleep(interval)
                 
     async def start(self):
         if self.is_running:
             return
             
-        try:
-            success, error = await self._ensure_client()
-            if not success:
-                logger.error(f"❌ {error}")
-                return
-                
-            if not self.config.get('message_text'):
-                logger.error("❌ Текст сообщения не указан!")
-                return
-                
-            self.is_running = True
-            self.sent_count = 0
-            self.last_sent_time = 0
+        success, error = await self._ensure_client()
+        if not success:
+            logger.error(f"❌ {error}")
+            return
             
-            self.task = asyncio.create_task(self.spam_loop())
-            logger.info("🚀 Рассылка запущена")
-            
-        except Exception as e:
-            logger.error(f"❌ Ошибка запуска: {e}")
-            self.is_running = False
+        self.is_running = True
+        self.sent_count = 0
+        self.last_sent_time = 0
+        
+        self.task = asyncio.create_task(self.spam_loop())
+        logger.info("🚀 Рассылка запущена")
             
     async def stop(self):
         self.is_running = False
@@ -419,7 +376,7 @@ async def spam_loop(self):
         if self.client and self.client.is_connected():
             await self.client.disconnect()
             
-        logger.info("🛑 Рассылка остановлена")
+        logger.info("🛑 Остановлено")
         
     def pause(self):
         self.is_paused = True
@@ -430,21 +387,18 @@ async def spam_loop(self):
         logger.info("▶️ Продолжено")
         
     def get_status(self) -> Dict:
-        """Получение статуса для веб-интерфейса"""
-        is_authorized = self.config.get('is_authorized', False)
-        
         return {
             'running': self.is_running,
             'paused': self.is_paused,
             'groups_count': len(self.groups),
             'groups': self.groups,
             'message_text': self.config.get('message_text', ''),
-            'interval': self.config.get('interval', 3600),
+            'interval': self.config.get('interval', 10),
             'enabled': self.config.get('enabled', False),
             'delay_between_groups': self.config.get('delay_between_groups', 3),
             'max_messages_per_hour': self.config.get('max_messages_per_hour', 30),
             'is_connected': self.client and self.client.is_connected() if self.client else False,
-            'is_authorized': is_authorized,
+            'is_authorized': self.config.get('is_authorized', False),
             'phone': self.config.get('phone', ''),
-            'auth_waiting': self._auth_waiting if hasattr(self, '_auth_waiting') else False
+            'auth_waiting': self._auth_waiting
         }
