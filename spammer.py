@@ -327,54 +327,58 @@ class TelegramSpammer:
         except Exception as e:
             raise Exception(f"Ошибка получения сущности: {str(e)}")
 
-    async def send_to_group(self, group: str, message: str) -> Tuple[bool, str]:
-        """Отправка сообщения в группу. Возвращает (успех, сообщение_об_ошибке)"""
-        try:
-            client = await self._get_client()
-
-            max_msgs = self.config.get('max_messages_per_hour', 30)
-            if self.sent_count >= max_msgs:
-                msg = f"Достигнут лимит сообщений в час ({max_msgs})"
-                logger.warning(f"⚠️ {msg}")
-                return False, msg
-
-            current_time = time.time()
-            delay = self.config.get('delay_between_groups', 3)
-            if current_time - self.last_sent_time < delay:
-                wait_time = delay - (current_time - self.last_sent_time)
-                await asyncio.sleep(wait_time)
-
-            try:
-                entity = await self.get_entity_by_id(group)
-                logger.info(f"🔍 Получена сущность для {group}")
-            except Exception as e:
-                return False, f"Группа не найдена: {str(e)}"
-
-            try:
-                await client.send_message(entity, message)
-                logger.info(f"✅ Отправлено в {group}")
-            except errors.ChatWriteForbiddenError:
-                return False, "Нет прав на отправку сообщений в эту группу"
-            except errors.RPCError as e:
-                return False, f"Ошибка Telegram: {str(e)}"
-
-            self.sent_count += 1
-            self.last_sent_time = time.time()
-
-            return True, "OK"
-
-        except errors.FloodWaitError as e:
-            wait = e.seconds
-            msg = f"FloodWait: ждём {wait} секунд"
+async def send_to_group(self, group: str, message: str) -> Tuple[bool, str]:
+    try:
+        client = await self._get_client()
+            
+        max_msgs = self.config.get('max_messages_per_hour', 30)
+        if self.sent_count >= max_msgs:
+            msg = f"Достигнут лимит сообщений в час ({max_msgs})"
             logger.warning(f"⚠️ {msg}")
-            await asyncio.sleep(wait)
             return False, msg
-        except asyncio.CancelledError:
-            return False, "Операция отменена"
+            
+        current_time = time.time()
+        delay = self.config.get('delay_between_groups', 3)
+        if current_time - self.last_sent_time < delay:
+            wait_time = delay - (current_time - self.last_sent_time)
+            await asyncio.sleep(wait_time)
+            
+        # ПРОБЛЕМА ТУТ - ПОЛУЧЕНИЕ СУЩНОСТИ
+        try:
+            logger.info(f"🔍 Пытаюсь получить сущность для {group}")
+            entity = await asyncio.wait_for(
+                self.get_entity_by_id(group),
+                timeout=10
+            )
+            logger.info(f"✅ Получена сущность для {group}")
+        except asyncio.TimeoutError:
+            return False, f"Таймаут получения сущности {group}"
         except Exception as e:
-            error_msg = f"Неизвестная ошибка: {str(e)}"
-            logger.error(f"❌ {error_msg}")
-            return False, error_msg
+            return False, f"Группа не найдена: {str(e)}"
+            
+        # Отправка
+        try:
+            await asyncio.wait_for(
+                client.send_message(entity, message),
+                timeout=30
+            )
+            logger.info(f"✅ Отправлено в {group}")
+        except asyncio.TimeoutError:
+            return False, f"Таймаут отправки в {group}"
+        except errors.ChatWriteForbiddenError:
+            return False, "Нет прав на отправку"
+        except errors.RPCError as e:
+            return False, f"Ошибка Telegram: {str(e)}"
+            
+        self.sent_count += 1
+        self.last_sent_time = time.time()
+        
+        return True, "OK"
+        
+    except Exception as e:
+        error_msg = f"Неизвестная ошибка: {str(e)}"
+        logger.error(f"❌ {error_msg}")
+        return False, error_msg
 
     async def spam_loop(self):
         """Основной цикл рассылки"""
