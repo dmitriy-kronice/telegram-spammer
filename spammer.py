@@ -143,27 +143,37 @@ class TelegramSpammer:
     # ====== ЦИКЛ РАССЫЛКИ ======
     async def spam_loop(self):
         logger.info("🔄 Цикл запущен")
+        logger.info(f"🔍 is_running = {self.is_running}")
+        logger.info(f"🔍 enabled = {self.config.get('enabled', False)}")
+        logger.info(f"🔍 groups = {self.groups}")
         
         while self.is_running:
             try:
+                logger.info("🔍 Итерация цикла...")
+                
                 if self.is_paused:
+                    logger.info("⏸️ Пауза, жду 2 сек")
                     await asyncio.sleep(2)
                     continue
                     
                 if not self.config.get('enabled', False):
+                    logger.info("⏸️ Рассылка отключена (enabled=False)")
                     await asyncio.sleep(5)
                     continue
                     
                 if not self.groups:
+                    logger.warning("⚠️ Нет групп")
                     await asyncio.sleep(10)
                     continue
                     
                 text = self.config.get('message_text', '')
                 if not text:
+                    logger.warning("⚠️ Нет текста")
                     await asyncio.sleep(10)
                     continue
                 
                 logger.info(f"📤 Отправка в {len(self.groups)} групп")
+                logger.info(f"📝 Текст: {text[:50]}...")
                 
                 for chat in self.groups:
                     if not self.is_running:
@@ -174,15 +184,25 @@ class TelegramSpammer:
                     
                     if success:
                         self.sent_count += 1
+                        logger.info(f"✅ Отправлено в {chat}")
+                    else:
+                        logger.error(f"❌ Не отправлено в {chat}")
                         
                     await asyncio.sleep(self.config.get('delay', 3))
                     
+                logger.info(f"✅ Цикл завершен, отправлено {self.sent_count}")
                 self.sent_count = 0
                 
             except Exception as e:
                 logger.error(f"❌ Ошибка цикла: {e}")
+                import traceback
+                traceback.print_exc()
+                await asyncio.sleep(5)
                 
-            await asyncio.sleep(self.config.get('interval', 10))
+            if self.is_running:
+                interval = self.config.get('interval', 10)
+                logger.info(f"⏱ Ожидание {interval} сек")
+                await asyncio.sleep(interval)
             
     # ====== УПРАВЛЕНИЕ ======
     async def start(self):
