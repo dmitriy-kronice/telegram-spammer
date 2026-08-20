@@ -40,6 +40,20 @@ asyncio.set_event_loop(loop)
 def index():
     return render_template('index.html')
 
+@app.route('/api/auth/status')
+def auth_status():
+    try:
+        if not spammer:
+            return jsonify({'success': False, 'error': 'Spammer не инициализирован'})
+        
+        status = spammer.get_status()
+        return jsonify({
+            'success': True,
+            'is_authorized': status.get('is_authorized', False),
+            'phone': status.get('phone', '')
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/api/status')
 def get_status():
