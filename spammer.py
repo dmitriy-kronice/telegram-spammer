@@ -185,31 +185,34 @@ class TelegramSpammer:
         except Exception as e:
             logger.error(f"❌ Ошибка подтверждения кода: {e}")
             return False, f"Ошибка: {str(e)}"
-
+            
     async def _ensure_client(self) -> Tuple[bool, str]:
         async with self._client_lock:
             try:
                 logger.info("🔍 _ensure_client: НАЧАЛО")
-
+                
                 if not self.config.get('api_id') or not self.config.get('api_hash'):
-                    logger.error("❌ _ensure_client: Нет API данных")
                     return False, "API ID или API Hash не указаны!"
-
-                logger.info("🔍 _ensure_client: Проверяю клиент")
-                if not self.client:
-                    logger.info("🔍 _ensure_client: Создаю новый клиент")
-                    self.client = TelegramClient(
-                        self.config['session_name'],
-                        self.config['api_id'],
-                        self.config['api_hash']
-                    )
-
-                logger.info("🔍 _ensure_client: Проверяю подключение")
-                if not self.client.is_connected():
-                    logger.info("🔍 _ensure_client: Подключаюсь...")
-                    await self.client.connect()
-                    logger.info("✅ _ensure_client: Клиент подключен")
-
+                
+                # ВСЕГДА СОЗДАЕМ НОВЫЙ КЛИЕНТ (старый глючный)
+                if self.client:
+                    try:
+                        await self.client.disconnect()
+                    except:
+                        pass
+                    self.client = None
+                
+                logger.info("🔍 _ensure_client: Создаю НОВЫЙ клиент")
+                self.client = TelegramClient(
+                    self.config['session_name'],
+                    self.config['api_id'],
+                    self.config['api_hash']
+                )
+                
+                logger.info("🔍 _ensure_client: Подключаюсь...")
+                await self.client.connect()
+                logger.info("✅ _ensure_client: Клиент подключен")
+                
                 logger.info("🔍 _ensure_client: Проверяю авторизацию")
                 if not await self.client.is_user_authorized():
                     logger.info("🔍 _ensure_client: Не авторизован")
@@ -221,83 +224,61 @@ class TelegramSpammer:
                         logger.info("✅ _ensure_client: Авторизован по сессии")
                     else:
                         return False, "Требуется авторизация"
-
+                
                 logger.info("✅ _ensure_client: УСПЕШНО")
                 return True, "OK"
+                
+            except asyncio.TimeoutError:
+                logger.error("❌ _ensure_client: ТАЙМАУТ!")
+                return False, "Таймаут подключения к Telegram"
             except Exception as e:
                 logger.error(f"❌ _ensure_client: Ошибка: {e}")
                 return False, str(e)
-
-    async def _get_client(self):
-        success, error = await self._ensure_client()
-        if not success:
-            raise Exception(error)
-        return self.client
+    
+        async def _get_client(self):
+            success, error = await self._ensure_client()
+            if not success:
+                raise Exception(error)
+            return self.client
 
 
 
     async def send_to_group(self, group: str, message: str) -> Tuple[bool, str]:
         try:
-            logger.info(f"📤 send_to_group: Начинаю для {group}")
-            
-            # Проверяем клиент
-            if not self.client or not self.client.is_connected():
-                logger.info("📤 send_to_group: Подключаю клиент")
+            # ВСЯ ОТПРАВКА С ТАЙМАУТОМ 15 СЕКУНД
+            async with asyncio.timeout(15):
+                logger.info(f"📤 send_to_group: Начинаю для {group}")
+                
+                # Пересоздаем клиент
                 success, error = await self._ensure_client()
                 if not success:
                     return False, error
-            
-            logger.info(f"📤 send_to_group: Клиент готов")
-            
-            # Проверка лимита
-            max_msgs = self.config.get('max_messages_per_hour', 30)
-            if self.sent_count >= max_msgs:
-                return False, f"Лимит {max_msgs} сообщений в час"
-            
-            # Задержка
-            current_time = time.time()
-            delay = self.config.get('delay_between_groups', 3)
-            if current_time - self.last_sent_time < delay:
-                await asyncio.sleep(delay - (current_time - self.last_sent_time))
-            
-            # ПРОБУЕМ ОТПРАВИТЬ БЕЗ ПОЛУЧЕНИЯ СУЩНОСТИ!
-            try:
-                logger.info(f"📤 send_to_group: Отправляю в {group} напрямую...")
                 
-                # Пробуем отправить как есть
-                await asyncio.wait_for(
-                    self.client.send_message(group, message),
-                    timeout=30
-                )
+                logger.info(f"📤 send_to_group: Клиент готов")
+                
+                # Проверка лимита
+                max_msgs = self.config.get('max_messages_per_hour', 30)
+                if self.sent_count >= max_msgs:
+                    return False, f"Лимит {max_msgs} сообщений в час"
+                
+                # Задержка
+                current_time = time.time()
+                delay = self.config.get('delay_between_groups', 3)
+                if current_time - self.last_sent_time < delay:
+                    await asyncio.sleep(delay - (current_time - self.last_sent_time))
+                
+                # Отправляем напрямую
+                logger.info(f"📤 send_to_group: Отправляю в {group}...")
+                await self.client.send_message(group, message)
                 logger.info(f"✅ send_to_group: Отправлено в {group}")
                 
                 self.sent_count += 1
                 self.last_sent_time = time.time()
                 return True, "OK"
                 
-            except ValueError as e:
-                # Если не получилось - пробуем как число
-                logger.info(f"📤 send_to_group: Пробую как число {group}")
-                try:
-                    group_id = int(group)
-                    await asyncio.wait_for(
-                        self.client.send_message(group_id, message),
-                        timeout=30
-                    )
-                    logger.info(f"✅ send_to_group: Отправлено в {group_id}")
-                    self.sent_count += 1
-                    self.last_sent_time = time.time()
-                    return True, "OK"
-                except Exception as e2:
-                    return False, f"Не удалось отправить: {str(e2)}"
-                    
-            except errors.ChatWriteForbiddenError:
-                return False, "Нет прав на отправку"
-            except errors.RPCError as e:
-                return False, f"Ошибка Telegram: {str(e)}"
-            except asyncio.TimeoutError:
-                return False, "Таймаут отправки"
-                
+        except asyncio.TimeoutError:
+            logger.error(f"❌ send_to_group: ТАЙМАУТ для {group}")
+            return False, "Таймаут 15 сек"
         except Exception as e:
             logger.error(f"❌ send_to_group: Ошибка: {e}")
             return False, str(e)
