@@ -5,7 +5,6 @@ import time
 import os
 from typing import Tuple
 from telethon import TelegramClient, errors
-from telethon.sessions import MemorySession
 
 os.makedirs('logs', exist_ok=True)
 
@@ -27,7 +26,6 @@ class TelegramSpammer:
         self.last_sent_time = 0
         self._auth_phone = None
         self._auth_code_hash = None
-        self._session_data = None  # Храним сессию в памяти
         
         self.ensure_files()
         self.load_config()
@@ -69,11 +67,11 @@ class TelegramSpammer:
         with open(self.groups_file, 'w') as f:
             json.dump(self.groups, f, indent=2)
             
-    # ====== СОЗДАНИЕ КЛИЕНТА (БЕЗ ФАЙЛА!) ======
-    def _create_client(self):
-        """Создает клиент с сессией в памяти"""
+    # ====== КЛИЕНТ С ФАЙЛОВОЙ СЕССИЕЙ ======
+    def _get_client(self):
+        """Создает клиент с файловой сессией"""
         return TelegramClient(
-            MemorySession(),
+            'session_' + str(self.config.get('api_id', 0)),
             self.config['api_id'],
             self.config['api_hash']
         )
@@ -83,8 +81,7 @@ class TelegramSpammer:
         try:
             self._auth_phone = phone
             
-            # Создаем клиент в памяти
-            self.client = self._create_client()
+            self.client = self._get_client()
             await self.client.connect()
             
             if await self.client.is_user_authorized():
@@ -126,16 +123,19 @@ class TelegramSpammer:
     # ====== ОТПРАВКА ======
     async def send_message(self, chat_id: str, text: str) -> bool:
         try:
-            # Проверяем клиент
+            # Используем ОДИН клиент (созданный в start)
             if not self.client or not self.client.is_connected():
                 logger.error("❌ Клиент не подключен!")
                 return False
                 
-            # Отправляем
             await self.client.send_message(chat_id, text)
             logger.info(f"✅ Отправлено в {chat_id}")
             return True
             
+        except errors.FloodWaitError as e:
+            logger.warning(f"⚠️ FloodWait {e.seconds} сек")
+            await asyncio.sleep(e.seconds)
+            return False
         except Exception as e:
             logger.error(f"❌ Ошибка {chat_id}: {e}")
             return False
@@ -143,37 +143,27 @@ class TelegramSpammer:
     # ====== ЦИКЛ РАССЫЛКИ ======
     async def spam_loop(self):
         logger.info("🔄 Цикл запущен")
-        logger.info(f"🔍 is_running = {self.is_running}")
-        logger.info(f"🔍 enabled = {self.config.get('enabled', False)}")
-        logger.info(f"🔍 groups = {self.groups}")
         
         while self.is_running:
             try:
-                logger.info("🔍 Итерация цикла...")
-                
                 if self.is_paused:
-                    logger.info("⏸️ Пауза, жду 2 сек")
                     await asyncio.sleep(2)
                     continue
                     
                 if not self.config.get('enabled', False):
-                    logger.info("⏸️ Рассылка отключена (enabled=False)")
                     await asyncio.sleep(5)
                     continue
                     
                 if not self.groups:
-                    logger.warning("⚠️ Нет групп")
                     await asyncio.sleep(10)
                     continue
                     
                 text = self.config.get('message_text', '')
                 if not text:
-                    logger.warning("⚠️ Нет текста")
                     await asyncio.sleep(10)
                     continue
                 
                 logger.info(f"📤 Отправка в {len(self.groups)} групп")
-                logger.info(f"📝 Текст: {text[:50]}...")
                 
                 for chat in self.groups:
                     if not self.is_running:
@@ -184,25 +174,15 @@ class TelegramSpammer:
                     
                     if success:
                         self.sent_count += 1
-                        logger.info(f"✅ Отправлено в {chat}")
-                    else:
-                        logger.error(f"❌ Не отправлено в {chat}")
                         
                     await asyncio.sleep(self.config.get('delay', 3))
                     
-                logger.info(f"✅ Цикл завершен, отправлено {self.sent_count}")
                 self.sent_count = 0
                 
             except Exception as e:
                 logger.error(f"❌ Ошибка цикла: {e}")
-                import traceback
-                traceback.print_exc()
-                await asyncio.sleep(5)
                 
-            if self.is_running:
-                interval = self.config.get('interval', 10)
-                logger.info(f"⏱ Ожидание {interval} сек")
-                await asyncio.sleep(interval)
+            await asyncio.sleep(self.config.get('interval', 10))
             
     # ====== УПРАВЛЕНИЕ ======
     async def start(self):
@@ -211,28 +191,20 @@ class TelegramSpammer:
             
         try:
             # Создаем клиент
-            from telethon.sessions import MemorySession
-            self.client = TelegramClient(
-                MemorySession(),
-                self.config['api_id'],
-                self.config['api_hash']
-            )
+            self.client = self._get_client()
             await self.client.connect()
             
-            # Авторизуемся если нужно
+            # Если не авторизован - пробуем по телефону
             if not await self.client.is_user_authorized():
                 if self.config.get('phone'):
-                    # Используем sign_in вместо start!
-                    # Пробуем войти по сохраненной сессии
-                    try:
-                        await self.client.sign_in(phone=self.config['phone'])
-                    except:
-                        logger.error("❌ Не удалось авторизоваться!")
-                        return
+                    logger.info("🔄 Авторизуюсь по сохраненному телефону...")
+                    await self.client.start(phone=self.config['phone'])
+                    self.config['is_authorized'] = True
+                    self.save_config()
                 else:
-                    logger.error("❌ Нет телефона!")
+                    logger.error("❌ Не авторизован!")
                     return
-                    
+                
             self.is_running = True
             self.task = asyncio.create_task(self.spam_loop())
             logger.info("🚀 Запущено!")
@@ -267,7 +239,12 @@ class TelegramSpammer:
             'interval': self.config.get('interval', 10),
             'enabled': self.config.get('enabled', False),
             'delay_between_groups': self.config.get('delay', 3),
-            'is_connected': False,
+            'is_connected': bool(self.client and self.client.is_connected()),
             'is_authorized': self.config.get('is_authorized', False),
             'phone': self.config.get('phone', '')
         }
+        
+    # ====== АЛИАС ДЛЯ СОВМЕСТИМОСТИ ======
+    async def send_to_group(self, group: str, message: str) -> Tuple[bool, str]:
+        success = await self.send_message(group, message)
+        return success, "OK" if success else "Ошибка"
