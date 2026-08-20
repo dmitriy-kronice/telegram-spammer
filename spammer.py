@@ -126,24 +126,14 @@ class TelegramSpammer:
     # ====== ОТПРАВКА ======
     async def send_message(self, chat_id: str, text: str) -> bool:
         try:
-            # Создаем НОВЫЙ клиент для каждой отправки
-            client = self._create_client()
-            await client.connect()
-            
-            # Авторизуемся
-            if not await client.is_user_authorized():
-                if self.config.get('phone'):
-                    await client.start(phone=self.config['phone'])
-                else:
-                    logger.error("❌ Не авторизован!")
-                    return False
-            
+            # Проверяем клиент
+            if not self.client or not self.client.is_connected():
+                logger.error("❌ Клиент не подключен!")
+                return False
+                
             # Отправляем
-            await client.send_message(chat_id, text)
+            await self.client.send_message(chat_id, text)
             logger.info(f"✅ Отправлено в {chat_id}")
-            
-            # Закрываем соединение
-            await client.disconnect()
             return True
             
         except Exception as e:
@@ -200,11 +190,29 @@ class TelegramSpammer:
             return
             
         try:
-            # Проверяем авторизацию
-            if not self.config.get('is_authorized', False):
-                logger.error("❌ Не авторизован! Используйте веб-интерфейс")
-                return
-                
+            # Создаем клиент
+            from telethon.sessions import MemorySession
+            self.client = TelegramClient(
+                MemorySession(),
+                self.config['api_id'],
+                self.config['api_hash']
+            )
+            await self.client.connect()
+            
+            # Авторизуемся если нужно
+            if not await self.client.is_user_authorized():
+                if self.config.get('phone'):
+                    # Используем sign_in вместо start!
+                    # Пробуем войти по сохраненной сессии
+                    try:
+                        await self.client.sign_in(phone=self.config['phone'])
+                    except:
+                        logger.error("❌ Не удалось авторизоваться!")
+                        return
+                else:
+                    logger.error("❌ Нет телефона!")
+                    return
+                    
             self.is_running = True
             self.task = asyncio.create_task(self.spam_loop())
             logger.info("🚀 Запущено!")
