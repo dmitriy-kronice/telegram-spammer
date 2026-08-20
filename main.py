@@ -275,7 +275,7 @@ def test_message():
 
     def run_async():
         asyncio.set_event_loop(loop)
-        return loop.run_until_complete(spammer.send_to_group(group, message))
+        return loop.run_until_complete(spammer.send_message(group, message))
 
     success, error = run_async()
     return jsonify({'success': success, 'message': 'Отправлено' if success else error})
