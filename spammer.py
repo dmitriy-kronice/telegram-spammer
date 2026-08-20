@@ -41,7 +41,8 @@ class TelegramSpammer:
                 "interval": 10,
                 "delay": 3,
                 "max_per_hour": 30,
-                "enabled": False
+                "enabled": False,
+                "is_authorized": False
             }
             with open(self.config_file, 'w') as f:
                 json.dump(default, f, indent=2)
@@ -66,23 +67,24 @@ class TelegramSpammer:
         with open(self.groups_file, 'w') as f:
             json.dump(self.groups, f, indent=2)
             
+    # ====== СОЗДАНИЕ КЛИЕНТА ======
+    def _get_client(self):
+        """Создает клиент с постоянной сессией"""
+        return TelegramClient(
+            'session_' + str(self.config.get('api_id', 0)),  # Уникальное имя
+            self.config['api_id'],
+            self.config['api_hash']
+        )
+            
     # ====== АВТОРИЗАЦИЯ ======
-    from telethon.sessions import MemorySession
-    
     async def send_auth_code(self, phone: str) -> Tuple[bool, str]:
         try:
             self._auth_phone = phone
             
-            from telethon.sessions import MemorySession
-            
-            self.client = TelegramClient(
-                MemorySession(),
-                self.config['api_id'],
-                self.config['api_hash']
-            )
+            # Создаем клиент с сессией
+            self.client = self._get_client()
             await self.client.connect()
             
-            # ТОЛЬКО ПРОВЕРКА, БЕЗ start()!
             if await self.client.is_user_authorized():
                 self.config['phone'] = phone
                 self.config['is_authorized'] = True
@@ -94,14 +96,14 @@ class TelegramSpammer:
             return True, "Код отправлен!"
             
         except Exception as e:
+            logger.error(f"❌ Ошибка: {e}")
             return False, str(e)
             
     async def verify_auth_code(self, code: str) -> Tuple[bool, str]:
         try:
-            # УБЕРИ ЭТУ СТРОКУ:
-            # await self.client.start(phone=self._auth_phone)
-            
-            # ТОЛЬКО sign_in:
+            if not self.client:
+                return False, "Клиент не создан"
+                
             await self.client.sign_in(
                 phone=self._auth_phone,
                 code=code,
@@ -111,26 +113,23 @@ class TelegramSpammer:
             self.config['phone'] = self._auth_phone
             self.config['is_authorized'] = True
             self.save_config()
+            
+            logger.info("✅ Авторизация успешна!")
             return True, "Авторизация успешна!"
+            
         except Exception as e:
+            logger.error(f"❌ Ошибка: {e}")
             return False, str(e)
             
-    # ====== ОТПРАВКА (ПРОСТАЯ) ======
+    # ====== ОТПРАВКА ======
     async def send_message(self, chat_id: str, text: str) -> bool:
         try:
             # Проверяем клиент
             if not self.client or not self.client.is_connected():
-                self.client = TelegramClient(
-                    'session',
-                    self.config['api_id'],
-                    self.config['api_hash']
-                )
+                self.client = self._get_client()
                 await self.client.connect()
-                
-                if not await self.client.is_user_authorized():
-                    await self.client.start(phone=self.config['phone'])
             
-            # ОТПРАВЛЯЕМ!
+            # Отправляем
             await self.client.send_message(chat_id, text)
             logger.info(f"✅ Отправлено в {chat_id}")
             return True
@@ -149,7 +148,7 @@ class TelegramSpammer:
                     await asyncio.sleep(2)
                     continue
                     
-                if not self.config.get('enabled'):
+                if not self.config.get('enabled', False):
                     await asyncio.sleep(5)
                     continue
                     
@@ -183,27 +182,29 @@ class TelegramSpammer:
                 
             await asyncio.sleep(self.config.get('interval', 10))
             
-        # ====== УПРАВЛЕНИЕ ======
+    # ====== УПРАВЛЕНИЕ ======
     async def start(self):
         if self.is_running:
             return
             
         try:
-            from telethon.sessions import MemorySession
-            
             # Создаем клиент
-            self.client = TelegramClient(
-                MemorySession(),
-                self.config['api_id'],
-                self.config['api_hash']
-            )
+            self.client = self._get_client()
             await self.client.connect()
             
-            # ПРОВЕРЯЕМ АВТОРИЗАЦИЮ БЕЗ start()!
+            # Проверяем авторизацию
             if not await self.client.is_user_authorized():
-                logger.error("❌ Не авторизован! Используйте веб-интерфейс для входа")
-                return
-                    
+                # Пробуем авторизоваться по сохраненному телефону
+                if self.config.get('phone'):
+                    logger.info("🔄 Пробую авторизоваться по сессии...")
+                    # Сессия уже должна быть сохранена после verify_auth_code
+                    await self.client.start(phone=self.config['phone'])
+                    self.config['is_authorized'] = True
+                    self.save_config()
+                else:
+                    logger.error("❌ Не авторизован!")
+                    return
+                
             self.is_running = True
             self.task = asyncio.create_task(self.spam_loop())
             logger.info("🚀 Запущено!")
@@ -238,5 +239,7 @@ class TelegramSpammer:
             'interval': self.config.get('interval', 10),
             'enabled': self.config.get('enabled', False),
             'delay_between_groups': self.config.get('delay', 3),
-            'is_connected': bool(self.client and self.client.is_connected())
+            'is_connected': bool(self.client and self.client.is_connected()),
+            'is_authorized': self.config.get('is_authorized', False),
+            'phone': self.config.get('phone', '')
         }
