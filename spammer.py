@@ -173,14 +173,17 @@ class TelegramSpammer:
                 
             await asyncio.sleep(self.config.get('interval', 10))
             
-    # ====== УПРАВЛЕНИЕ ======
+        # ====== УПРАВЛЕНИЕ ======
     async def start(self):
         if self.is_running:
             return
             
         try:
+            from telethon.sessions import MemorySession
+            
+            # Создаем клиент БЕЗ ФАЙЛА
             self.client = TelegramClient(
-                'session',
+                MemorySession(),
                 self.config['api_id'],
                 self.config['api_hash']
             )
