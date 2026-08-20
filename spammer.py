@@ -99,6 +99,7 @@ class TelegramSpammer:
                 phone_code_hash=self._auth_code_hash
             )
             self.config['phone'] = self._auth_phone
+            self.config['is_authorized'] = True
             self.save_config()
             return True, "Авторизация успешна!"
         except Exception as e:
@@ -177,24 +178,30 @@ class TelegramSpammer:
         if self.is_running:
             return
             
-        # Создаем клиент
-        self.client = TelegramClient(
-            'session',
-            self.config['api_id'],
-            self.config['api_hash']
-        )
-        await self.client.connect()
-        
-        if not await self.client.is_user_authorized():
-            if self.config.get('phone'):
-                await self.client.start(phone=self.config['phone'])
-            else:
-                logger.error("❌ Не авторизован!")
-                return
-                
-        self.is_running = True
-        self.task = asyncio.create_task(self.spam_loop())
-        logger.info("🚀 Запущено!")
+        try:
+            self.client = TelegramClient(
+                'session',
+                self.config['api_id'],
+                self.config['api_hash']
+            )
+            await self.client.connect()
+            
+            if not await self.client.is_user_authorized():
+                if self.config.get('phone'):
+                    await self.client.start(phone=self.config['phone'])
+                    self.config['is_authorized'] = True
+                    self.save_config()
+                else:
+                    logger.error("❌ Не авторизован!")
+                    return
+                    
+            self.is_running = True
+            self.task = asyncio.create_task(self.spam_loop())
+            logger.info("🚀 Запущено!")
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка старта: {e}")
+            self.is_running = False
         
     async def stop(self):
         self.is_running = False
