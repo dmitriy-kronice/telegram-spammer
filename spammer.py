@@ -5,6 +5,7 @@ import time
 import os
 from typing import Tuple
 from telethon import TelegramClient, errors
+from telethon.sessions import MemorySession
 
 os.makedirs('logs', exist_ok=True)
 
@@ -26,6 +27,7 @@ class TelegramSpammer:
         self.last_sent_time = 0
         self._auth_phone = None
         self._auth_code_hash = None
+        self._session_data = None  # Храним сессию в памяти
         
         self.ensure_files()
         self.load_config()
@@ -67,11 +69,11 @@ class TelegramSpammer:
         with open(self.groups_file, 'w') as f:
             json.dump(self.groups, f, indent=2)
             
-    # ====== СОЗДАНИЕ КЛИЕНТА ======
-    def _get_client(self):
-        """Создает клиент с постоянной сессией"""
+    # ====== СОЗДАНИЕ КЛИЕНТА (БЕЗ ФАЙЛА!) ======
+    def _create_client(self):
+        """Создает клиент с сессией в памяти"""
         return TelegramClient(
-            'session_' + str(self.config.get('api_id', 0)),  # Уникальное имя
+            MemorySession(),
             self.config['api_id'],
             self.config['api_hash']
         )
@@ -81,8 +83,8 @@ class TelegramSpammer:
         try:
             self._auth_phone = phone
             
-            # Создаем клиент с сессией
-            self.client = self._get_client()
+            # Создаем клиент в памяти
+            self.client = self._create_client()
             await self.client.connect()
             
             if await self.client.is_user_authorized():
@@ -124,14 +126,24 @@ class TelegramSpammer:
     # ====== ОТПРАВКА ======
     async def send_message(self, chat_id: str, text: str) -> bool:
         try:
-            # Проверяем клиент
-            if not self.client or not self.client.is_connected():
-                self.client = self._get_client()
-                await self.client.connect()
+            # Создаем НОВЫЙ клиент для каждой отправки
+            client = self._create_client()
+            await client.connect()
+            
+            # Авторизуемся
+            if not await client.is_user_authorized():
+                if self.config.get('phone'):
+                    await client.start(phone=self.config['phone'])
+                else:
+                    logger.error("❌ Не авторизован!")
+                    return False
             
             # Отправляем
-            await self.client.send_message(chat_id, text)
+            await client.send_message(chat_id, text)
             logger.info(f"✅ Отправлено в {chat_id}")
+            
+            # Закрываем соединение
+            await client.disconnect()
             return True
             
         except Exception as e:
@@ -188,22 +200,10 @@ class TelegramSpammer:
             return
             
         try:
-            # Создаем клиент
-            self.client = self._get_client()
-            await self.client.connect()
-            
             # Проверяем авторизацию
-            if not await self.client.is_user_authorized():
-                # Пробуем авторизоваться по сохраненному телефону
-                if self.config.get('phone'):
-                    logger.info("🔄 Пробую авторизоваться по сессии...")
-                    # Сессия уже должна быть сохранена после verify_auth_code
-                    await self.client.start(phone=self.config['phone'])
-                    self.config['is_authorized'] = True
-                    self.save_config()
-                else:
-                    logger.error("❌ Не авторизован!")
-                    return
+            if not self.config.get('is_authorized', False):
+                logger.error("❌ Не авторизован! Используйте веб-интерфейс")
+                return
                 
             self.is_running = True
             self.task = asyncio.create_task(self.spam_loop())
@@ -239,7 +239,7 @@ class TelegramSpammer:
             'interval': self.config.get('interval', 10),
             'enabled': self.config.get('enabled', False),
             'delay_between_groups': self.config.get('delay', 3),
-            'is_connected': bool(self.client and self.client.is_connected()),
+            'is_connected': False,
             'is_authorized': self.config.get('is_authorized', False),
             'phone': self.config.get('phone', '')
         }
