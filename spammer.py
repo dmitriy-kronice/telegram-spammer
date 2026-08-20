@@ -5,6 +5,7 @@ import time
 import os
 from typing import Tuple
 from telethon import TelegramClient, errors
+from telethon.sessions import MemorySession
 
 os.makedirs('logs', exist_ok=True)
 
@@ -26,6 +27,7 @@ class TelegramSpammer:
         self.last_sent_time = 0
         self._auth_phone = None
         self._auth_code_hash = None
+        self._session_string = None  # Храним сессию как строку
         
         self.ensure_files()
         self.load_config()
@@ -42,7 +44,8 @@ class TelegramSpammer:
                 "delay": 3,
                 "max_per_hour": 30,
                 "enabled": False,
-                "is_authorized": False
+                "is_authorized": False,
+                "session_string": ""  # <-- Сохраняем сессию сюда
             }
             with open(self.config_file, 'w') as f:
                 json.dump(default, f, indent=2)
@@ -67,26 +70,38 @@ class TelegramSpammer:
         with open(self.groups_file, 'w') as f:
             json.dump(self.groups, f, indent=2)
             
-    # ====== КЛИЕНТ С ФАЙЛОВОЙ СЕССИЕЙ ======
-    def _get_client(self):
-        """Создает клиент с файловой сессией"""
-        return TelegramClient(
-            'session_' + str(self.config.get('api_id', 0)),
-            self.config['api_id'],
-            self.config['api_hash']
-        )
+    # ====== КЛИЕНТ (БЕЗ ФАЙЛА!) ======
+    def _create_client(self):
+        """Создает клиент с сессией в памяти"""
+        if self.config.get('session_string'):
+            # Восстанавливаем сессию из строки
+            from telethon.sessions import StringSession
+            return TelegramClient(
+                StringSession(self.config['session_string']),
+                self.config['api_id'],
+                self.config['api_hash']
+            )
+        else:
+            return TelegramClient(
+                MemorySession(),
+                self.config['api_id'],
+                self.config['api_hash']
+            )
             
     # ====== АВТОРИЗАЦИЯ ======
     async def send_auth_code(self, phone: str) -> Tuple[bool, str]:
         try:
             self._auth_phone = phone
             
-            self.client = self._get_client()
+            self.client = self._create_client()
             await self.client.connect()
             
             if await self.client.is_user_authorized():
                 self.config['phone'] = phone
                 self.config['is_authorized'] = True
+                # Сохраняем сессию в строку
+                from telethon.sessions import StringSession
+                self.config['session_string'] = StringSession.save(self.client.session)
                 self.save_config()
                 return True, "Уже авторизован"
             
@@ -111,6 +126,10 @@ class TelegramSpammer:
             
             self.config['phone'] = self._auth_phone
             self.config['is_authorized'] = True
+            
+            # Сохраняем сессию в строку!
+            from telethon.sessions import StringSession
+            self.config['session_string'] = StringSession.save(self.client.session)
             self.save_config()
             
             logger.info("✅ Авторизация успешна!")
@@ -123,10 +142,15 @@ class TelegramSpammer:
     # ====== ОТПРАВКА ======
     async def send_message(self, chat_id: str, text: str) -> bool:
         try:
-            # Используем ОДИН клиент (созданный в start)
+            # Если клиент отвалился - пересоздаем
             if not self.client or not self.client.is_connected():
-                logger.error("❌ Клиент не подключен!")
-                return False
+                logger.info("🔄 Пересоздаю клиент...")
+                self.client = self._create_client()
+                await self.client.connect()
+                
+                if not await self.client.is_user_authorized():
+                    if self.config.get('phone'):
+                        await self.client.sign_in(phone=self.config['phone'])
                 
             await self.client.send_message(chat_id, text)
             logger.info(f"✅ Отправлено в {chat_id}")
@@ -191,19 +215,33 @@ class TelegramSpammer:
             
         try:
             # Создаем клиент
-            self.client = self._get_client()
+            self.client = self._create_client()
             await self.client.connect()
             
-            # Если не авторизован - пробуем по телефону
+            # Если не авторизован - пробуем по сохраненной сессии
             if not await self.client.is_user_authorized():
-                if self.config.get('phone'):
-                    logger.info("🔄 Авторизуюсь по сохраненному телефону...")
-                    await self.client.start(phone=self.config['phone'])
-                    self.config['is_authorized'] = True
-                    self.save_config()
-                else:
-                    logger.error("❌ Не авторизован!")
-                    return
+                if self.config.get('session_string'):
+                    logger.info("🔄 Пробую восстановить сессию...")
+                    # Пересоздаем клиент со строкой сессии
+                    from telethon.sessions import StringSession
+                    self.client = TelegramClient(
+                        StringSession(self.config['session_string']),
+                        self.config['api_id'],
+                        self.config['api_hash']
+                    )
+                    await self.client.connect()
+                    
+                if not await self.client.is_user_authorized():
+                    if self.config.get('phone'):
+                        logger.info("🔄 Авторизуюсь по телефону...")
+                        await self.client.sign_in(phone=self.config['phone'])
+                        # Обновляем строку сессии
+                        from telethon.sessions import StringSession
+                        self.config['session_string'] = StringSession.save(self.client.session)
+                        self.save_config()
+                    else:
+                        logger.error("❌ Не авторизован!")
+                        return
                 
             self.is_running = True
             self.task = asyncio.create_task(self.spam_loop())
@@ -244,7 +282,7 @@ class TelegramSpammer:
             'phone': self.config.get('phone', '')
         }
         
-    # ====== АЛИАС ДЛЯ СОВМЕСТИМОСТИ ======
+    # ====== АЛИАС ======
     async def send_to_group(self, group: str, message: str) -> Tuple[bool, str]:
         success = await self.send_message(group, message)
         return success, "OK" if success else "Ошибка"
