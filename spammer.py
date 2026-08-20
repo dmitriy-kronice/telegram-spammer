@@ -67,20 +67,25 @@ class TelegramSpammer:
             json.dump(self.groups, f, indent=2)
             
     # ====== АВТОРИЗАЦИЯ ======
+    from telethon.sessions import MemorySession
+    
     async def send_auth_code(self, phone: str) -> Tuple[bool, str]:
         try:
             self._auth_phone = phone
             
-            # Создаем клиент
+            from telethon.sessions import MemorySession
+            
             self.client = TelegramClient(
-                'session',
+                MemorySession(),
                 self.config['api_id'],
                 self.config['api_hash']
             )
             await self.client.connect()
             
+            # ТОЛЬКО ПРОВЕРКА, БЕЗ start()!
             if await self.client.is_user_authorized():
                 self.config['phone'] = phone
+                self.config['is_authorized'] = True
                 self.save_config()
                 return True, "Уже авторизован"
             
@@ -93,11 +98,16 @@ class TelegramSpammer:
             
     async def verify_auth_code(self, code: str) -> Tuple[bool, str]:
         try:
+            # УБЕРИ ЭТУ СТРОКУ:
+            # await self.client.start(phone=self._auth_phone)
+            
+            # ТОЛЬКО sign_in:
             await self.client.sign_in(
                 phone=self._auth_phone,
                 code=code,
                 phone_code_hash=self._auth_code_hash
             )
+            
             self.config['phone'] = self._auth_phone
             self.config['is_authorized'] = True
             self.save_config()
@@ -181,7 +191,7 @@ class TelegramSpammer:
         try:
             from telethon.sessions import MemorySession
             
-            # Создаем клиент БЕЗ ФАЙЛА
+            # Создаем клиент
             self.client = TelegramClient(
                 MemorySession(),
                 self.config['api_id'],
@@ -189,14 +199,10 @@ class TelegramSpammer:
             )
             await self.client.connect()
             
+            # ПРОВЕРЯЕМ АВТОРИЗАЦИЮ БЕЗ start()!
             if not await self.client.is_user_authorized():
-                if self.config.get('phone'):
-                    await self.client.start(phone=self.config['phone'])
-                    self.config['is_authorized'] = True
-                    self.save_config()
-                else:
-                    logger.error("❌ Не авторизован!")
-                    return
+                logger.error("❌ Не авторизован! Используйте веб-интерфейс для входа")
+                return
                     
             self.is_running = True
             self.task = asyncio.create_task(self.spam_loop())
@@ -205,7 +211,7 @@ class TelegramSpammer:
         except Exception as e:
             logger.error(f"❌ Ошибка старта: {e}")
             self.is_running = False
-        
+            
     async def stop(self):
         self.is_running = False
         if self.task:
